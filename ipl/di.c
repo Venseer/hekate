@@ -1,5 +1,6 @@
 /*
 * Copyright (c) 2018 naehrwert
+* Copyright (C) 2018 CTCaer
 *
 * This program is free software; you can redistribute it and/or modify it
 * under the terms and conditions of the GNU General Public License,
@@ -212,7 +213,7 @@ void display_color_screen(u32 color)
 	display_backlight(1);
 }
 
-u32 *display_init_framebuffer(u32 *fb)
+u32 *display_init_framebuffer()
 {
 	//Sanitize framebuffer area. Aligned to 4MB.
 	memset((u32 *)0xC0000000, 0, 0x400000);

@@ -1,5 +1,6 @@
 /*
 * Copyright (c) 2018 naehrwert
+* Copyright (C) 2018 CTCaer
 *
 * This program is free software; you can redistribute it and/or modify it
 * under the terms and conditions of the GNU General Public License,
@@ -534,7 +535,7 @@ static const cfg_op_t cfg_display_framebuffer[32] = {
 	{DC_CMD_DISPLAY_WINDOW_HEADER, WINDOW_A_SELECT}, //Enable window A.
 	{DC_WIN_WIN_OPTIONS, 0},
 	{DC_DISP_DISP_WIN_OPTIONS, DSI_ENABLE}, //DSI_ENABLE
-	{DC_WIN_COLOR_DEPTH, WIN_COLOR_DEPTH_R8G8B8A8}, //T_A8B8G8R8
+	{DC_WIN_COLOR_DEPTH, WIN_COLOR_DEPTH_B8G8R8A8}, //T_A8R8G8B8 //NX Default: T_A8B8G8R8, WIN_COLOR_DEPTH_R8G8B8A8
 	{DC_WIN_WIN_OPTIONS, 0},
 	{DC_WIN_WIN_OPTIONS, 0},
 	{DC_WIN_POSITION, 0}, //(0,0)
