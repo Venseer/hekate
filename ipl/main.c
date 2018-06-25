@@ -20,7 +20,6 @@
 
 #include <string.h>
 #include <stdlib.h>
-#include <alloca.h>
 
 #include "clock.h"
 #include "uart.h"
@@ -52,6 +51,9 @@
 #include "hos.h"
 #include "pkg1.h"
 #include "mmc.h"
+#include "lz.h"
+#include "max17050.h"
+#include "bq24193.h"
 
 //TODO: ugly.
 gfx_ctxt_t gfx_ctxt;
@@ -139,7 +141,10 @@ void *sd_file_read(char *path)
 int sd_save_to_file(void * buf, u32 size, const char * filename)
 {
 	FIL fp;
-	if (f_open(&fp, filename, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK) {
+	u32 res = 0;
+	res = f_open(&fp, filename, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK;
+	if (res) {
+		EPRINTFARGS("Error (%d) creating file %s.\n", res, filename);
 		return 1;
 	}
 
@@ -186,8 +191,8 @@ void config_gpios()
 	PINMUX_AUX(PINMUX_AUX_UART2_TX) = 0;
 	PINMUX_AUX(PINMUX_AUX_UART3_TX) = 0;
 
-	PINMUX_AUX(PINMUX_AUX_GPIO_PE6) = 0x40;
-	PINMUX_AUX(PINMUX_AUX_GPIO_PH6) = 0x40;
+	PINMUX_AUX(PINMUX_AUX_GPIO_PE6) = PINMUX_INPUT_ENABLE;
+	PINMUX_AUX(PINMUX_AUX_GPIO_PH6) = PINMUX_INPUT_ENABLE;
 
 	gpio_config(GPIO_PORT_G, GPIO_PIN_0, GPIO_MODE_GPIO);
 	gpio_config(GPIO_PORT_D, GPIO_PIN_1, GPIO_MODE_GPIO);
@@ -218,11 +223,11 @@ void config_pmc_scratch()
 
 void mbist_workaround()
 {
-	CLOCK(0x410) = (CLOCK(0x410) | 0x8000) & 0xFFFFBFFF;
-	CLOCK(0xD0) |= 0x40800000u;
-	CLOCK(0x2AC) = 0x40;
-	CLOCK(0x294) = 0x40000;
-	CLOCK(0x304) = 0x18000000;
+	CLOCK(CLK_RST_CONTROLLER_CLK_SOURCE_SOR1) = (CLOCK(CLK_RST_CONTROLLER_CLK_SOURCE_SOR1) | 0x8000) & 0xFFFFBFFF;
+	CLOCK(CLK_RST_CONTROLLER_PLLD_BASE) |= 0x40800000u;
+	CLOCK(CLK_RST_CONTROLLER_RST_DEV_Y_CLR) = 0x40;
+	CLOCK(CLK_RST_CONTROLLER_RST_DEV_X_CLR) = 0x40000;
+	CLOCK(CLK_RST_CONTROLLER_RST_DEV_L_CLR) = 0x18000000;
 	sleep(2);
 
 	I2S(0x0A0) |= 0x400;
@@ -239,9 +244,9 @@ void mbist_workaround()
 	VIC(0x8C) = 0xFFFFFFFF;
 	sleep(2);
 
-	CLOCK(0x2A8) = 0x40;
-	CLOCK(0x300) = 0x18000000;
-	CLOCK(0x290) = 0x40000;
+	CLOCK(CLK_RST_CONTROLLER_RST_DEV_Y_SET) = 0x40;
+	CLOCK(CLK_RST_CONTROLLER_RST_DEV_L_SET) = 0x18000000;
+	CLOCK(CLK_RST_CONTROLLER_RST_DEV_X_SET) = 0x40000;
 	CLOCK(CLK_RST_CONTROLLER_CLK_OUT_ENB_H) = 0xC0;
 	CLOCK(CLK_RST_CONTROLLER_CLK_OUT_ENB_L) = 0x80000130;
 	CLOCK(CLK_RST_CONTROLLER_CLK_OUT_ENB_U) = 0x1F00200;
@@ -249,16 +254,16 @@ void mbist_workaround()
 	CLOCK(CLK_RST_CONTROLLER_CLK_OUT_ENB_W) = 0x402000FC;
 	CLOCK(CLK_RST_CONTROLLER_CLK_OUT_ENB_X) = 0x23000780;
 	CLOCK(CLK_RST_CONTROLLER_CLK_OUT_ENB_Y) = 0x300;
-	CLOCK(0xF8) = 0;
-	CLOCK(0xFC) = 0;
-	CLOCK(0x3A0) = 0;
-	CLOCK(0x3A4) = 0;
-	CLOCK(0x554) = 0;
-	CLOCK(0xD0) &= 0x1F7FFFFF;
-	CLOCK(0x410) &= 0xFFFF3FFF;
-	CLOCK(0x148) = (CLOCK(0x148) & 0x1FFFFFFF) | 0x80000000;
-	CLOCK(0x180) = (CLOCK(0x180) & 0x1FFFFFFF) | 0x80000000;
-	CLOCK(0x6A0) = (CLOCK(0x6A0) & 0x1FFFFFFF) | 0x80000000;
+	CLOCK(CLK_RST_CONTROLLER_LVL2_CLK_GATE_OVRA) = 0;
+	CLOCK(CLK_RST_CONTROLLER_LVL2_CLK_GATE_OVRB) = 0;
+	CLOCK(CLK_RST_CONTROLLER_LVL2_CLK_GATE_OVRC) = 0;
+	CLOCK(CLK_RST_CONTROLLER_LVL2_CLK_GATE_OVRD) = 0;
+	CLOCK(CLK_RST_CONTROLLER_LVL2_CLK_GATE_OVRE) = 0;
+	CLOCK(CLK_RST_CONTROLLER_PLLD_BASE) &= 0x1F7FFFFF;
+	CLOCK(CLK_RST_CONTROLLER_CLK_SOURCE_SOR1) &= 0xFFFF3FFF;
+	CLOCK(CLK_RST_CONTROLLER_CLK_SOURCE_VI) = (CLOCK(CLK_RST_CONTROLLER_CLK_SOURCE_VI) & 0x1FFFFFFF) | 0x80000000;
+	CLOCK(CLK_RST_CONTROLLER_CLK_SOURCE_HOST1X) = (CLOCK(CLK_RST_CONTROLLER_CLK_SOURCE_HOST1X) & 0x1FFFFFFF) | 0x80000000;
+	CLOCK(CLK_RST_CONTROLLER_CLK_SOURCE_NVENC) = (CLOCK(CLK_RST_CONTROLLER_CLK_SOURCE_NVENC) & 0x1FFFFFFF) | 0x80000000;
 }
 
 void config_se_brom()
@@ -309,8 +314,8 @@ void config_hw()
 	clock_enable_i2c(I2C_1);
 	clock_enable_i2c(I2C_5);
 
-	static const clock_t clock_unk1 = { 0x358, 0x360, 0x42C, 0x1F, 0, 0 };
-	static const clock_t clock_unk2 = { 0x358, 0x360, 0, 0x1E, 0, 0 };
+	static const clock_t clock_unk1 = { CLK_RST_CONTROLLER_RST_DEVICES_V, CLK_RST_CONTROLLER_CLK_OUT_ENB_V, 0x42C, 0x1F, 0, 0 };
+	static const clock_t clock_unk2 = { CLK_RST_CONTROLLER_RST_DEVICES_V, CLK_RST_CONTROLLER_CLK_OUT_ENB_V, 0, 0x1E, 0, 0 };
 	clock_enable(&clock_unk1);
 	clock_enable(&clock_unk2);
 
@@ -357,14 +362,15 @@ void print_fuseinfo()
 	{
 		if (sd_mount())
 		{
-			char fuseFilename[9];
-			memcpy(fuseFilename, "fuse.bin", 8);
-			fuseFilename[8] = 0;
+			char fuseFilename[23];
+			f_mkdir("Backup/Dumps");
+			memcpy(fuseFilename, "Backup/Dumps/fuses.bin\0", 23);
 
 			if (sd_save_to_file((u8 *)0x7000F900, 0x2FC, fuseFilename))
 				EPRINTF("\nError creating fuse.bin file.");
 			else
-				gfx_puts(&gfx_con, "\nDone!\n");				
+				gfx_puts(&gfx_con, "\nDone!\n");
+			sd_unmount();
 		}
 
 		btn_wait();
@@ -390,14 +396,15 @@ void print_kfuseinfo()
 	{
 		if (sd_mount())
 		{
-			char kfuseFilename[10];
-			memcpy(kfuseFilename, "kfuse.bin", 9);
-			kfuseFilename[9] = 0;
+			char kfuseFilename[24];
+			f_mkdir("Backup/Dumps");
+			memcpy(kfuseFilename, "Backup/Dumps/kfuses.bin\0", 24);
 
 			if (sd_save_to_file((u8 *)buf, KFUSE_NUM_WORDS * 4, kfuseFilename))
 				EPRINTF("\nError creating kfuse.bin file.");
 			else
 				gfx_puts(&gfx_con, "\nDone!\n");
+			sd_unmount();
 		}
 
 		btn_wait();
@@ -430,12 +437,12 @@ void print_mmc_info()
 		case 0: /* MMC v1.0 - v1.2 */
 		case 1: /* MMC v1.4 */
 			gfx_printf(&gfx_con,
-			" Vendor ID:  %03X\n\
-			 Model:      %c%c%c%c%c%c%c\n\
-			 HW rev:     %X\n\
-			 FW rev:     %X\n\
-			 S/N:        %03X\n\
-			 Month/Year: %02d/%04d\n\n",
+			" Vendor ID:  %03X\n"
+			" Model:      %c%c%c%c%c%c%c\n"
+			" HW rev:     %X\n"
+			" FW rev:     %X\n"
+			" S/N:        %03X\n"
+			" Month/Year: %02d/%04d\n\n",
 			storage.cid.manfid,
 			storage.cid.prod_name[0], storage.cid.prod_name[1],	storage.cid.prod_name[2],
 			storage.cid.prod_name[3], storage.cid.prod_name[4],	storage.cid.prod_name[5],
@@ -446,13 +453,13 @@ void print_mmc_info()
 		case 3: /* MMC v3.1 - v3.3 */
 		case 4: /* MMC v4 */
 			gfx_printf(&gfx_con,
-			" Vendor ID:  %X\n\
-			 Card/BGA:   %X\n\
-			 OEM ID:     %02X\n\
-			 Model:      %c%c%c%c%c%c\n\
-			 Prd Rev:    %X\n\
-			 S/N:        %04X\n\
-			 Month/Year: %02d/%04d\n\n",
+			" Vendor ID:  %X\n"
+			" Card/BGA:   %X\n"
+			" OEM ID:     %02X\n"
+			" Model:      %c%c%c%c%c%c\n"
+			" Prd Rev:    %X\n"
+			" S/N:        %04X\n"
+			" Month/Year: %02d/%04d\n\n",
 			storage.cid.manfid, storage.cid.card_bga, storage.cid.oemid,
 			storage.cid.prod_name[0], storage.cid.prod_name[1], storage.cid.prod_name[2],
 			storage.cid.prod_name[3], storage.cid.prod_name[4],	storage.cid.prod_name[5],
@@ -505,15 +512,17 @@ void print_mmc_info()
 			card_type_support[pos_type] = 0;
 
 			gfx_printf(&gfx_con,
-				" Spec Version:  %02X\n\
-				 Extended Rev:  1.%d\n\
-				 Dev Version:   %d\n\
-				 Cmd Classes:   %02X\n\
-				 Capacity:      %s\n\
-				 Max Speed:     %d MB/s (%d MHz)\n\
-				 Type Support:  %s\n\n",
+				" Spec Version:  %02X\n"
+				" Extended Rev:  1.%d\n"
+				" Dev Version:   %d\n"
+				" Cmd Classes:   %02X\n"
+				" Capacity:      %s\n"
+				" Max Rate:      %d MB/s (%d MHz)\n"
+				" Current Rate:  %d MB/s\n"
+				" Type Support:  %s\n\n",
 				storage.csd.mmca_vsn, storage.ext_csd.rev, storage.ext_csd.dev_version, storage.csd.cmdclass,
-				storage.csd.capacity == (4096 * 512) ? "High" : "Low", speed & 0xFFFF, (speed >> 16) & 0xFFFF, card_type_support);
+				storage.csd.capacity == (4096 * 512) ? "High" : "Low", speed & 0xFFFF, (speed >> 16) & 0xFFFF,
+				storage.csd.busspeed, card_type_support);
 
 			u32 boot_size = storage.ext_csd.boot_mult << 17;
 			u32 rpmb_size = storage.ext_csd.rpmb_mult << 17;
@@ -538,6 +547,7 @@ void print_mmc_info()
 					gpp_idx++, 0xFFAEFD14, part->name, 0xFFCCCCCC, (part->lba_end - part->lba_start + 1) >> SECTORS_TO_MIB_COEFF,
 					part->lba_end - part->lba_start + 1, part->lba_start, part->lba_end);
 			}
+			nx_emmc_gpt_free(&gpt);
 		}
 	}
 
@@ -560,13 +570,13 @@ void print_sdcard_info()
 
 		gfx_printf(&gfx_con, "%kCard IDentification:%k\n", 0xFF00DDFF, 0xFFCCCCCC);
 		gfx_printf(&gfx_con,
-			" Vendor ID:  %02x\n\
-			 OEM ID:     %c%c\n\
-			 Model:      %c%c%c%c%c\n\
-			 HW rev:     %X\n\
-			 FW rev:     %X\n\
-			 S/N:        %08x\n\
-			 Month/Year: %02d/%04d\n\n",
+			" Vendor ID:  %02x\n"
+			" OEM ID:     %c%c\n"
+			" Model:      %c%c%c%c%c\n"
+			" HW rev:     %X\n"
+			" FW rev:     %X\n"
+			" S/N:        %08x\n"
+			" Month/Year: %02d/%04d\n\n",
 			sd_storage.cid.manfid, (sd_storage.cid.oemid >> 8) & 0xFF, sd_storage.cid.oemid & 0xFF,
 			sd_storage.cid.prod_name[0], sd_storage.cid.prod_name[1], sd_storage.cid.prod_name[2],
 			sd_storage.cid.prod_name[3], sd_storage.cid.prod_name[4],
@@ -576,23 +586,26 @@ void print_sdcard_info()
 		gfx_printf(&gfx_con, "%kCard-Specific Data V%d.0:%k\n", 0xFF00DDFF, sd_storage.csd.structure + 1, 0xFFCCCCCC);
 		capacity = sd_storage.csd.capacity >> (20 - sd_storage.csd.read_blkbits);
 		gfx_printf(&gfx_con,
-			" Cmd Classes:    %02X\n\
-			 Capacity:       %d MiB\n\
-			 Bus Width:      %d\n\
-			 Speed Class:    %d\n\
-			 UHS Grade:      U%d\n\
-			 Video Class:    V%d\n\
-			 App perf class: A%d\n\
-			 Write Protect:  %d\n\n",
+			" Cmd Classes:    %02X\n"
+			" Capacity:       %d MiB\n"
+			" Bus Width:      %d\n"
+			" Current Rate:   %d MB/s (%d MHz)\n"
+			" Speed Class:    %d\n"
+			" UHS Grade:      U%d\n"
+			" Video Class:    V%d\n"
+			" App perf class: A%d\n"
+			" Write Protect:  %d\n\n",
 			sd_storage.csd.cmdclass, capacity,
-			sd_storage.ssr.bus_width, sd_storage.ssr.speed_class, sd_storage.ssr.uhs_grade,
-			sd_storage.ssr.video_class, sd_storage.ssr.app_class, sd_storage.csd.write_protect);
+			sd_storage.ssr.bus_width, sd_storage.csd.busspeed, sd_storage.csd.busspeed * 2,
+			sd_storage.ssr.speed_class, sd_storage.ssr.uhs_grade, sd_storage.ssr.video_class,
+			sd_storage.ssr.app_class, sd_storage.csd.write_protect);
 
 		gfx_puts(&gfx_con, "Acquiring FAT volume info...\n\n");
 		f_getfree("", &sd_fs.free_clst, NULL);
 		gfx_printf(&gfx_con, "%kFound %s volume:%k\n Free:    %d MiB\n Cluster: %d KiB\n",
 				0xFF00DDFF, sd_fs.fs_type == FS_EXFAT ? "exFAT" : "FAT32", 0xFFCCCCCC,
 				sd_fs.free_clst * sd_fs.csize >> SECTORS_TO_MIB_COEFF, (sd_fs.csize > 1) ? (sd_fs.csize >> 1) : 512);
+		sd_unmount();
 	}
 
 	btn_wait();
@@ -675,39 +688,61 @@ void power_off()
 	i2c_send_byte(I2C_5, 0x3C, MAX77620_REG_ONOFFCNFG1, MAX77620_ONOFFCNFG1_PWR_OFF);
 }
 
-int dump_emmc_verify(sdmmc_storage_t *storage, u32 lba_curr, char* outFilename, u32 NUM_SECTORS_PER_ITER, emmc_part_t *part)
+//TODO: Make it faster!!
+int dump_emmc_verify(sdmmc_storage_t *storage, u32 lba_curr, char* outFilename, emmc_part_t *part)
 {
 	FIL fp;
 	u32 prevPct = 200;
+	int res = 0;
 
 	if (f_open(&fp, outFilename, FA_READ) == FR_OK)
 	{
-		u8 *bufEm = (u8 *)malloc(NX_EMMC_BLOCKSIZE * NUM_SECTORS_PER_ITER);
-		u8 *bufSd = (u8 *)malloc(NX_EMMC_BLOCKSIZE * NUM_SECTORS_PER_ITER);
-
 		u32 totalSectorsVer = (u32)(f_size(&fp) >> 9);
-		u32 lbaCurrVer = lba_curr - totalSectorsVer;
+		
+		u32 numSectorsPerIter = 0;
+		if (totalSectorsVer > 0x200000)
+			numSectorsPerIter = 8192;
+		else
+			numSectorsPerIter = 512;
 
-		u32 pct = (u64)((u64)(lbaCurrVer - part->lba_start) * 100u) / (u64)(part->lba_end - part->lba_start);
+		u8 *bufEm = (u8 *)malloc(NX_EMMC_BLOCKSIZE * numSectorsPerIter);
+		u8 *bufSd = (u8 *)malloc(NX_EMMC_BLOCKSIZE * numSectorsPerIter);
+
+		u32 pct = (u64)((u64)(lba_curr - part->lba_start) * 100u) / (u64)(part->lba_end - part->lba_start);
 		tui_pbar(&gfx_con, 0, gfx_con.y, pct, 0xFF96FF00, 0xFF155500);
 
+		u32 num = 0;
 		while (totalSectorsVer > 0)
 		{
-			u32 num = MIN(totalSectorsVer, NUM_SECTORS_PER_ITER);
+			num = MIN(totalSectorsVer, numSectorsPerIter);
 
-			if(!sdmmc_storage_read(storage, lbaCurrVer, num, bufEm))
+			if(!sdmmc_storage_read(storage, lba_curr, num, bufEm))
 			{
-				EPRINTFARGS("\nFailed to read %d blocks @ LBA %08X\nfrom eMMC. Aborting..\n",
-				num, lbaCurrVer);
+				EPRINTFARGS("\nFailed to read %d blocks (@LBA %08X),\nfrom eMMC!\n\nVerification failed..\n",
+				num, lba_curr);
 
 				free(bufEm);
 				free(bufSd);
 				f_close(&fp);
 				return 1;
 			}
-			if (!(f_read(&fp, bufSd, num, NULL) == FR_OK))
+			if (f_read(&fp, bufSd, num << 9, NULL) != FR_OK)
 			{
-				EPRINTFARGS("\nFailed to read %d blocks from sd card.\nVerification failed..\n", num);
+				EPRINTFARGS("\nFailed to read %d blocks (@LBA %08X),\nfrom sd card!\n\nVerification failed..\n", num, lba_curr);
+
+				free(bufEm);
+				free(bufSd);
+				f_close(&fp);
+				return 1;
+			}
+			//TODO: Replace with the config check 2.
+			if (1)
+				res = memcmp32sparse((u32 *)bufEm, (u32 *)bufSd, num << 9);
+			else
+				res = memcmp((u32 *)bufEm, (u32 *)bufSd, num << 9);
+			if(res)
+			{
+				EPRINTFARGS("\nSD card and eMMC data (@LBA %08X),\ndo not match!\n\nVerification failed..\n", num, lba_curr);
 
 				free(bufEm);
 				free(bufSd);
@@ -715,24 +750,14 @@ int dump_emmc_verify(sdmmc_storage_t *storage, u32 lba_curr, char* outFilename, 
 				return 1;
 			}
 
-			if(!memcmp(bufEm, bufSd, num << 9))
-			{
-				EPRINTFARGS("\nSD card and eMMC data do not match!\nVerification failed..\n", num);
-
-				free(bufEm);
-				free(bufSd);
-				f_close(&fp);
-				return 1;
-			}
-
-			pct = (u64)((u64)(lbaCurrVer - part->lba_start) * 100u) / (u64)(part->lba_end - part->lba_start);
+			pct = (u64)((u64)(lba_curr - part->lba_start) * 100u) / (u64)(part->lba_end - part->lba_start);
 			if (pct != prevPct)
 			{
 				tui_pbar(&gfx_con, 0, gfx_con.y, pct, 0xFF96FF00, 0xFF155500);
 				prevPct = pct;
 			}
 
-			lbaCurrVer += num;
+			lba_curr += num;
 			totalSectorsVer -= num;
 		}
 		free(bufEm);
@@ -745,7 +770,7 @@ int dump_emmc_verify(sdmmc_storage_t *storage, u32 lba_curr, char* outFilename, 
 	}
 	else
 	{
-		EPRINTF("\nFile not found or could not be loaded.\nVerification failed..\n");
+		EPRINTF("\nFile not found or could not be loaded.\n\nVerification failed..\n");
 		return 1;
 	}
 }
@@ -753,23 +778,23 @@ int dump_emmc_verify(sdmmc_storage_t *storage, u32 lba_curr, char* outFilename, 
 int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 {
 	static const u32 FAT32_FILESIZE_LIMIT = 0xFFFFFFFF;
-	static const u32 SECTORS_TO_MIB_COEFF  = 11;
+	static const u32 SECTORS_TO_MIB_COEFF = 11;
 
 	u32 multipartSplitSize = (1u << 31);
 	u32 totalSectors = part->lba_end - part->lba_start + 1;
+	u32 lbaStartPart = part->lba_start;
 	u32 currPartIdx = 0;
 	u32 numSplitParts = 0;
 	u32 maxSplitParts = 0;
 	int isSmallSdCard = 0;
 	int partialDumpInProgress = 0;
 	int res = 0;
-	char* outFilename = sd_path;
+	char *outFilename = sd_path;
 	u32 sdPathLen = strlen(sd_path);
 
 	FIL partialIdxFp;
 	char partialIdxFilename[12];
-	memcpy(partialIdxFilename, "partial.idx", 11);
-	partialIdxFilename[11] = 0;
+	memcpy(partialIdxFilename, "partial.idx\0", 12);
 
 	gfx_printf(&gfx_con, "\nSD Card free space: %d MiB, Total backup size %d MiB\n\n",
 		sd_fs.free_clst * sd_fs.csize >> SECTORS_TO_MIB_COEFF,
@@ -795,8 +820,8 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 			return 0;
 		}
 	}
-	// Check if we continuing a previous raw eMMC backup in progress.
-	if (f_open(&partialIdxFp, partialIdxFilename, FA_READ) == FR_OK)
+	// Check if we are continuing a previous raw eMMC or USER partition backup in progress.
+	if (f_open(&partialIdxFp, partialIdxFilename, FA_READ) == FR_OK && totalSectors > (FAT32_FILESIZE_LIMIT / NX_EMMC_BLOCKSIZE))
 	{
 		gfx_printf(&gfx_con, "%kFound Partial Backup in progress. Continuing...%k\n\n", 0xFFAEFD14, 0xFFCCCCCC);
 
@@ -826,8 +851,6 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 		u32 multipartSplitSectors = multipartSplitSize / NX_EMMC_BLOCKSIZE;
 		numSplitParts = (totalSectors + multipartSplitSectors - 1) / multipartSplitSectors;
 
-		outFilename = alloca(sdPathLen+4);
-		memcpy(outFilename, sd_path, sdPathLen);
 		outFilename[sdPathLen++] = '.';
 
 		if (!partialDumpInProgress)
@@ -855,15 +878,22 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 	}
 
 	FIL fp;
-	if (f_open(&fp, outFilename, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK)
+	gfx_con_getpos(&gfx_con, &gfx_con.savedx,  &gfx_con.savedy);
+	gfx_printf(&gfx_con, "Filename: %s\n\n", outFilename);
+	res = f_open(&fp, outFilename, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK;
+	if (res)
 	{
-		EPRINTFARGS("Error creating file %s.\n", outFilename);
+		EPRINTFARGS("Error (%d) creating file %s.\n", res, outFilename);
 
 		return 0;
 	}
 
-	static const u32 NUM_SECTORS_PER_ITER = 512;
-	u8 *buf = (u8 *)malloc(NX_EMMC_BLOCKSIZE * NUM_SECTORS_PER_ITER);
+	u32 numSectorsPerIter = 0;
+	if (totalSectors > 0x200000)
+		numSectorsPerIter = 8192;
+	else
+		numSectorsPerIter = 512;
+	u8 *buf = (u8 *)malloc(NX_EMMC_BLOCKSIZE * numSectorsPerIter);
 
 	u32 lba_curr = part->lba_start;
 	u32 bytesWritten = 0;
@@ -877,6 +907,7 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 		totalSectors -= currPartIdx * (multipartSplitSize / NX_EMMC_BLOCKSIZE);
 	}
 
+	u32 num = 0;
 	while(totalSectors > 0)
 	{
 		if (numSplitParts != 0 && bytesWritten >= multipartSplitSize)
@@ -885,13 +916,17 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 			memset(&fp, 0, sizeof(fp));
 			currPartIdx++;
 
-			// Verify part.
-			if (dump_emmc_verify(storage, lba_curr, outFilename, NUM_SECTORS_PER_ITER, part))
+			//TODO: Replace with the config check.
+			if (1)
 			{
-				EPRINTF("\nPress any key and try again...\n");
+				// Verify part.
+				if (dump_emmc_verify(storage, lbaStartPart, outFilename, part))
+				{
+					EPRINTF("\nPress any key and try again...\n");
 
-				free(buf);
-				return 0;
+					free(buf);
+					return 0;
+				}
 			}
 
 			if (numSplitParts >= 10 && currPartIdx < 10)
@@ -934,9 +969,13 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 			}
 
 			// Create next part.
-			if (f_open(&fp, outFilename, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK)
+			gfx_con_setpos(&gfx_con, gfx_con.savedx,  gfx_con.savedy);
+			gfx_printf(&gfx_con, "Filename: %s\n\n", outFilename);
+			lbaStartPart = lba_curr;
+			res = f_open(&fp, outFilename, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK;
+			if (res)
 			{
-				EPRINTFARGS("Error creating file %s.\n", outFilename);
+				EPRINTFARGS("Error (%d) creating file %s.\n", res, outFilename);
 
 				free(buf);
 				return 0;
@@ -945,7 +984,7 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 		}
 
 		retryCount = 0;
-		u32 num = MIN(totalSectors, NUM_SECTORS_PER_ITER);
+		num = MIN(totalSectors, numSectorsPerIter);
 		while(!sdmmc_storage_read(storage, lba_curr, num, buf))
 		{
 			EPRINTFARGS("Error reading %d blocks @ LBA %08X from eMMC (try %d), retrying...",
@@ -997,16 +1036,20 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 	free(buf);
 	f_close(&fp);
 
-	// Verify last part or single file backup.
-	if (dump_emmc_verify(storage, lba_curr, outFilename, NUM_SECTORS_PER_ITER, part))
+	//TODO: Replace with the config check.
+	if (0)
 	{
-		EPRINTF("\nPress any key and try again...\n");
+		// Verify last part or single file backup.
+		if (dump_emmc_verify(storage, lbaStartPart, outFilename, part))
+		{
+			EPRINTF("\nPress any key and try again...\n");
 
-		free(buf);
-		return 0;
+			free(buf);
+			return 0;
+		}
+		else
+			tui_pbar(&gfx_con, 0, gfx_con.y, 100, 0xFF96FF00, 0xFF155500);
 	}
-	else
-		tui_pbar(&gfx_con, 0, gfx_con.y, 100, 0xFF96FF00, 0xFF155500);
 
 	// Remove partial backup index file if no fatal errors occurred.
 	if(isSmallSdCard)
@@ -1050,7 +1093,15 @@ static void dump_emmc_selected(dumpType_t dumpType)
 	}
 
 	int i = 0;
+	char sdPath[64];
+	memcpy(sdPath, "Backup/", 7);
 	timer = get_tmr();
+
+	// Create Backup/Restore folders, if they do not exist.
+	f_mkdir("Backup");
+	f_mkdir("Backup/Partitions");
+	f_mkdir("Backup/Restore");
+
 	if (dumpType & DUMP_BOOT)
 	{
 		static const u32 BOOT_PART_SIZE = 0x400000;
@@ -1069,7 +1120,9 @@ static void dump_emmc_selected(dumpType_t dumpType)
 				bootPart.name, bootPart.lba_start, bootPart.lba_end, 0xFFCCCCCC);
 
 			sdmmc_storage_set_mmc_partition(&storage, i+1);
-			res = dump_emmc_part(bootPart.name, &storage, &bootPart);
+
+			strcpy(sdPath + 7, bootPart.name);
+			res = dump_emmc_part(sdPath, &storage, &bootPart);
 		}
 	}
 
@@ -1091,13 +1144,20 @@ static void dump_emmc_selected(dumpType_t dumpType)
 				gfx_printf(&gfx_con, "%k%02d: %s (%07X-%07X)%k\n", 0xFF00DDFF, i++,
 					part->name, part->lba_start, part->lba_end, 0xFFCCCCCC);
 
-				res = dump_emmc_part(part->name, &storage, part);
+				memcpy(sdPath, "Backup/Partitions/", 18);
+				strcpy(sdPath + 18, part->name);
+				res = dump_emmc_part(sdPath, &storage, part);
+				// If a part failed, don't continue.
+				if (!res)
+					break;
 			}
+			nx_emmc_gpt_free(&gpt);
 		}
 
 		if (dumpType & DUMP_RAW)
 		{
-			static const u32 RAW_AREA_NUM_SECTORS = 0x3A3E000;
+			// Get GP partition size dynamically. 
+			const u32 RAW_AREA_NUM_SECTORS = storage.sec_cnt;
 
 			emmc_part_t rawPart;
 			memset(&rawPart, 0, sizeof(rawPart));
@@ -1108,7 +1168,8 @@ static void dump_emmc_selected(dumpType_t dumpType)
 				gfx_printf(&gfx_con, "%k%02d: %s (%07X-%07X)%k\n", 0xFF00DDFF, i++,
 					rawPart.name, rawPart.lba_start, rawPart.lba_end, 0xFFCCCCCC);
 
-				res = dump_emmc_part(rawPart.name, &storage, &rawPart);
+				strcpy(sdPath + 7, rawPart.name);
+				res = dump_emmc_part(sdPath, &storage, &rawPart);
 			}
 		}
 	}
@@ -1116,10 +1177,13 @@ static void dump_emmc_selected(dumpType_t dumpType)
 	gfx_putc(&gfx_con, '\n');
 	gfx_printf(&gfx_con, "Time taken: %d seconds.\n", (get_tmr() - timer) / 1000000);
 	sdmmc_storage_end(&storage);
-	if (res)
+	if (res && 0) //TODO: Replace with the config check.
 		gfx_printf(&gfx_con, "\n%kFinished and verified!%k\nPress any key...\n",0xFF96FF00, 0xFFCCCCCC);
+	else if (res)
+		gfx_printf(&gfx_con, "\nFinished! Press any key...\n");
 
 out:;
+	sd_unmount();
 	btn_wait();
 }
 
@@ -1183,28 +1247,29 @@ void dump_package1()
 	gfx_printf(&gfx_con, "%kWarmboot ofst:       %k0x%05X\n\n", 0xFFC7EA46, 0xFFCCCCCC, hdr->wb_off);
 
 	// Dump package1.
-	if (sd_save_to_file(pkg1, 0x40000, "pkg1_decr.bin")) {
+	f_mkdir("Backup/pkg1");
+	if (sd_save_to_file(pkg1, 0x40000, "Backup/pkg1/pkg1_decr.bin")) {
 		EPRINTF("\nFailed to create pkg1_decr.bin");
 		goto out;
 	}
-	gfx_puts(&gfx_con, "\npackage1 dumped to pkg1_decr.bin\n");
+	gfx_puts(&gfx_con, "\nFull package1 dumped to pkg1_decr.bin\n");
 
 	// Dump nxbootloader.
-	if (sd_save_to_file(loader, hdr->ldr_size, "nxloader.bin")) {
+	if (sd_save_to_file(loader, hdr->ldr_size, "Backup/pkg1/nxloader.bin")) {
 		EPRINTF("\nFailed to create nxloader.bin");
 		goto out;
 	}
 	gfx_puts(&gfx_con, "NX Bootloader dumped to nxloader.bin\n");
 
 	// Dump secmon.
-	if (sd_save_to_file(secmon, hdr->sm_size, "secmon.bin")) {
+	if (sd_save_to_file(secmon, hdr->sm_size, "Backup/pkg1/secmon.bin")) {
 		EPRINTF("\nFailed to create secmon.bin");
 		goto out;
 	}
 	gfx_puts(&gfx_con, "Secure Monitor dumped to secmon.bin\n");
 
 	// Dump warmboot.
-	if (sd_save_to_file(warmboot, hdr->wb_size, "warmboot.bin")) {
+	if (sd_save_to_file(warmboot, hdr->wb_size, "Backup/pkg1/warmboot.bin")) {
 		EPRINTF("\nFailed to create warmboot.bin");
 		goto out;
 	}
@@ -1212,6 +1277,7 @@ void dump_package1()
 
 
 	sdmmc_storage_end(&storage);
+	sd_unmount();
 	gfx_puts(&gfx_con, "\nDone. Press any key...\n");
 
 out:;
@@ -1403,8 +1469,136 @@ void fix_sd_attr(){
 		buff[1] = 0;
 		fix_attributes(buff, &total);
 		gfx_printf(&gfx_con, "\n%kTotal archive bits cleared: %d!%k\n\nDone! Press any key...", 0xFF96FF00, total, 0xFFCCCCCC);
+		sd_unmount();
 	}
 	btn_wait();
+}
+
+void print_fuel_gauge_regs()
+{
+	gfx_clear_grey(&gfx_ctxt, 0x1B);
+	gfx_con_setpos(&gfx_con, 0, 0);
+
+	u8 *buf = (u8 *)malloc(0x100 * 2);
+
+	gfx_printf(&gfx_con, "%kBattery Fuel Gauge Registers:\n\n%k", 0xFF00DDFF, 0xFFCCCCCC);
+
+	for (int i = 0; i < 0x200; i += 2)
+	{
+		i2c_recv_buf_small(buf + i, 2, I2C_1, 0x36, i >> 1);
+		sleep(5000);
+	}
+
+	gfx_hexdump(&gfx_con, 0, (u8 *)buf, 0x200);
+
+	gfx_puts(&gfx_con, "\nPress POWER to dump them to SD Card.\nPress VOL to go to the menu.\n");
+
+	u32 btn = btn_wait();
+
+	if (btn & BTN_POWER)
+	{
+		if (sd_mount())
+		{
+			char fuelFilename[28];
+			f_mkdir("Backup/Dumps");
+			memcpy(fuelFilename, "Backup/Dumps/fuel_gauge.bin\0", 28);
+
+			if (sd_save_to_file((u8 *)buf, 0x200, fuelFilename))
+				EPRINTF("\nError creating fuel.bin file.");
+			else
+				gfx_puts(&gfx_con, "\nDone!\n");
+			sd_unmount();
+		}
+
+		btn_wait();
+	}
+	free(buf);
+}
+
+void fix_fuel_gauge_configuration()
+{
+	gfx_clear_grey(&gfx_ctxt, 0x1B);
+	gfx_con_setpos(&gfx_con, 0, 0);
+
+	int battVoltage, avgCurrent;
+
+	max17050_get_property(MAX17050_VCELL, &battVoltage);
+	max17050_get_property(MAX17050_AvgCurrent, &avgCurrent);
+
+	//Check if still charging. If not, check if battery is >= 95% (4.1V).
+	if (avgCurrent < 0 && battVoltage > 4100)
+	{
+		if ((avgCurrent / 1000) < -10)
+			EPRINTF("You need to be connected to a wall adapter,\nto apply this fix!");
+		else
+		{
+			gfx_printf(&gfx_con, "%kAre you really sure?\nThis will reset your fuel gauge completely!\n", 0xFFFFDD00);
+			gfx_printf(&gfx_con, "Additionally this will power off your console.\n%k", 0xFFCCCCCC);
+
+			gfx_puts(&gfx_con, "\nPress POWER to Continue.\nPress VOL to go to the menu.\n\n\n");
+
+			u32 btn = btn_wait();
+			if (btn & BTN_POWER)
+			{
+				max17050_fix_configuration();
+				sleep(1000000);
+				gfx_con_getpos(&gfx_con, &gfx_con.savedx,  &gfx_con.savedy);
+				u16 value = 0;
+				gfx_printf(&gfx_con, "%kThe console will power off in 45 seconds.\n%k", 0xFFFFDD00, 0xFFCCCCCC);
+				while (value < 46)
+				{
+					gfx_con_setpos(&gfx_con, gfx_con.savedx, gfx_con.savedy);
+					gfx_printf(&gfx_con, "%2ds elapsed", value);
+					sleep(1000000);
+					value++;
+				}
+				sleep(2000000);
+
+				power_off();
+			}
+			return;
+		}
+	}
+	else
+		EPRINTF("You need a fully charged battery\nand connected to a wall adapter,\nto apply this fix!");
+
+	sleep(500000);
+	btn_wait();
+}
+
+void fix_battery_desync()
+{
+	int avgCurrent;
+
+	gfx_clear_grey(&gfx_ctxt, 0x1B);
+	gfx_con_setpos(&gfx_con, 0, 0);
+
+	gfx_printf(&gfx_con, "%kAre you really sure?\nThis will wipe your battery stats completely!\n", 0xFFFFDD00);
+	gfx_printf(&gfx_con, "\nAdditionally you may need to reconfigure,\nyour time and date settings.\n%k", 0xFFCCCCCC);
+
+	gfx_puts(&gfx_con, "\nPress POWER to Continue.\nPress VOL to go to the menu.\n\n\n");
+	u32 btn = btn_wait();
+	if (btn & BTN_POWER)
+	{
+		gfx_clear_grey(&gfx_ctxt, 0x1B);
+		gfx_con_setpos(&gfx_con, 0, 0);
+		gfx_printf(&gfx_con, "%kDisconnect the USB cable and wait 30 seconds.\naAfter that press any key!%k\n\n", 0xFFFFDD00, 0xFFCCCCCC);
+		gfx_printf(&gfx_con, "%k* After this process is done,\n  connect the USB cable to power-on.\n\n%k", 0xFF00DDFF, 0xFFCCCCCC);
+		sleep(500000);
+		btn_wait();
+
+		//Check if still connected.
+		max17050_get_property(MAX17050_AvgCurrent, &avgCurrent);
+		if (avgCurrent < -100000)
+		{
+			bq24193_fake_battery_removal();
+			gfx_printf(&gfx_con, "If the device did not powered off,\ndo it from hekate menu");
+		}
+		else
+			EPRINTF("You need to be disconnected from USB,\nto apply this fix!");
+		sleep(500000);
+		btn_wait();
+	}
 }
 
 void about()
@@ -1456,6 +1650,9 @@ ment_t ment_cinfo[] = {
 	MDEF_CAPTION("-- Storage Info --", 0xFF0AB9E6),
 	MDEF_HANDLER("Print eMMC info", print_mmc_info),
 	MDEF_HANDLER("Print SD Card info", print_sdcard_info),
+	MDEF_CHGLINE(),
+	MDEF_CAPTION("------ Misc ------", 0xFF0AB9E6),
+	MDEF_HANDLER("Print fuel gauge info", print_fuel_gauge_regs),
 	MDEF_END()
 };
 menu_t menu_cinfo = {
@@ -1499,6 +1696,8 @@ ment_t ment_tools[] = {
 	MDEF_CAPTION("------ Misc -------", 0xFF0AB9E6),
 	MDEF_HANDLER("Dump package1", dump_package1),
 	MDEF_HANDLER("Fix SD files attributes", fix_sd_attr),
+	MDEF_HANDLER("Fix battery de-sync", &fix_battery_desync),
+	//MDEF_MENU("Fix fuel gauge configuration", &fix_fuel_gauge_configuration),
 	MDEF_CHGLINE(),
 	MDEF_CAPTION("---- Dangerous ----", 0xFFFF0000),
 	MDEF_MENU("AutoRCM", &menu_autorcm),
@@ -1548,10 +1747,12 @@ void ipl_main()
 	u32 *fb = display_init_framebuffer();
 	gfx_init_ctxt(&gfx_ctxt, fb, 720, 1280, 768);
 	gfx_clear_grey(&gfx_ctxt, 0x1B);
+
 #ifdef MENU_LOGO_ENABLE
 	Kc_MENU_LOGO = (u8 *)malloc(36864);
 	LZ_Uncompress(Kc_MENU_LOGOlz, Kc_MENU_LOGO, SZ_MENU_LOGOLZ);
 #endif //MENU_LOGO_ENABLE
+
 	gfx_con_init(&gfx_con, &gfx_ctxt);
 
 	// Enable backlight after initializing gfx

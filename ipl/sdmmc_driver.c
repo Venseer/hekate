@@ -908,7 +908,7 @@ static int _sdmmc_execute_cmd_inner(sdmmc_t *sdmmc, sdmmc_cmd_t *cmd, sdmmc_req_
 static int _sdmmc_config_sdmmc1()
 {
 	//Configure SD card detect.
-	PINMUX_AUX(PINMUX_AUX_GPIO_PZ1) = 0x49; //GPIO control, pull up.
+	PINMUX_AUX(PINMUX_AUX_GPIO_PZ1) = PINMUX_INPUT_ENABLE | PINMUX_PULL_UP | 1; //GPIO control, pull up.
 	APB_MISC(APB_MISC_GP_VGPIO_GPIO_MUX_SEL) = 0;
 	gpio_config(GPIO_PORT_Z, GPIO_PIN_1, GPIO_MODE_GPIO);
 	gpio_output_enable(GPIO_PORT_Z, GPIO_PIN_1, GPIO_OUTPUT_DISABLE);
@@ -927,12 +927,12 @@ static int _sdmmc_config_sdmmc1()
 
 	//Configure SDMMC1 pinmux.
 	APB_MISC(APB_MISC_GP_SDMMC1_CLK_LPBK_CONTROL) = 1;
-	PINMUX_AUX(PINMUX_AUX_SDMMC1_CLK) = 0x2060;
-	PINMUX_AUX(PINMUX_AUX_SDMMC1_CMD) = 0x2068;
-	PINMUX_AUX(PINMUX_AUX_SDMMC1_DAT3) = 0x2068;
-	PINMUX_AUX(PINMUX_AUX_SDMMC1_DAT2) = 0x2068;
-	PINMUX_AUX(PINMUX_AUX_SDMMC1_DAT1) = 0x2068;
-	PINMUX_AUX(PINMUX_AUX_SDMMC1_DAT0) = 0x2068;
+	PINMUX_AUX(PINMUX_AUX_SDMMC1_CLK)  = PINMUX_DRIVE_2X | PINMUX_INPUT_ENABLE | PINMUX_PARKED;
+	PINMUX_AUX(PINMUX_AUX_SDMMC1_CMD)  = PINMUX_DRIVE_2X | PINMUX_INPUT_ENABLE | PINMUX_PARKED | PINMUX_PULL_UP;
+	PINMUX_AUX(PINMUX_AUX_SDMMC1_DAT3) = PINMUX_DRIVE_2X | PINMUX_INPUT_ENABLE | PINMUX_PARKED | PINMUX_PULL_UP;
+	PINMUX_AUX(PINMUX_AUX_SDMMC1_DAT2) = PINMUX_DRIVE_2X | PINMUX_INPUT_ENABLE | PINMUX_PARKED | PINMUX_PULL_UP;
+	PINMUX_AUX(PINMUX_AUX_SDMMC1_DAT1) = PINMUX_DRIVE_2X | PINMUX_INPUT_ENABLE | PINMUX_PARKED | PINMUX_PULL_UP;
+	PINMUX_AUX(PINMUX_AUX_SDMMC1_DAT0) = PINMUX_DRIVE_2X | PINMUX_INPUT_ENABLE | PINMUX_PARKED | PINMUX_PULL_UP;
 
 	//Make sure the SDMMC1 controller is powered.
 	PMC(APBDEV_PMC_NO_IOPOWER) &= ~(1 << 12);
@@ -940,7 +940,7 @@ static int _sdmmc_config_sdmmc1()
 	PMC(APBDEV_PMC_PWR_DET_VAL) |= (1 << 12);
 
 	//Set enable SD card power.
-	PINMUX_AUX(PINMUX_AUX_DMIC3_CLK) = 0x45; //GPIO control, pull down.
+	PINMUX_AUX(PINMUX_AUX_DMIC3_CLK) = PINMUX_INPUT_ENABLE | PINMUX_PULL_DOWN | 1; //GPIO control, pull down.
 	gpio_config(GPIO_PORT_E, GPIO_PIN_4, GPIO_MODE_GPIO);
 	gpio_write(GPIO_PORT_E, GPIO_PIN_4, GPIO_HIGH);
 	gpio_output_enable(GPIO_PORT_E, GPIO_PIN_4, GPIO_OUTPUT_ENABLE);
@@ -1019,7 +1019,16 @@ void sdmmc_end(sdmmc_t *sdmmc)
 	if (!sdmmc->clock_stopped)
 	{
 		_sdmmc_sd_clock_disable(sdmmc);
+		// Disable SDMMC power. 
 		_sdmmc_set_voltage(sdmmc, SDMMC_POWER_OFF);
+
+		// Disable SD card power.
+		if (sdmmc->id == SDMMC_1)
+		{
+			gpio_output_enable(GPIO_PORT_E, GPIO_PIN_4, GPIO_OUTPUT_DISABLE);
+			sleep(1000); // To power cycle min 1ms without power is needed.
+		}
+
 		_sdmmc_get_clkcon(sdmmc);
 		clock_sdmmc_disable(sdmmc->id);
 		sdmmc->clock_stopped = 1;

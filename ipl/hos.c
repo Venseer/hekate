@@ -39,6 +39,7 @@
 #include "gfx.h"
 extern gfx_ctxt_t gfx_ctxt;
 extern gfx_con_t gfx_con;
+extern void sd_unmount();
 //#define DPRINTF(...) gfx_printf(&gfx_con, __VA_ARGS__)
 #define DPRINTF(...)
 
@@ -383,7 +384,8 @@ int hos_launch(ini_sec_t *cfg)
 	memset(&ctxt, 0, sizeof(launch_ctxt_t));
 	list_init(&ctxt.kip1_list);
 
-	gfx_clear_grey(&gfx_ctxt, 0x1B);
+	if (!gfx_con.mute)
+		gfx_clear_grey(&gfx_ctxt, 0x1B);
 	gfx_con_setpos(&gfx_con, 0, 0);
 
 	//Try to parse config if present.
@@ -480,7 +482,7 @@ int hos_launch(ini_sec_t *cfg)
 	gfx_printf(&gfx_con, "Rebuilt and loaded package2\n");
 
 	//Unmount SD card.
-	f_mount(NULL, "", 1);
+	sd_unmount();
 
 	gfx_printf(&gfx_con, "\n%kBooting...%k\n", 0xFF96FF00, 0xFFCCCCCC);
 
@@ -546,9 +548,9 @@ int hos_launch(ini_sec_t *cfg)
 	//Signal to pkg2 ready and continue boot.
 	*mb_in = bootStatePkg2Continue;
 
-	//Halt ourselves in waitevent state.
+	//Halt ourselves in waitevent state and resume if there's JTAG activity.
 	while (1)
-		FLOW_CTLR(0x4) = 0x50000000;
+		FLOW_CTLR(FLOW_CTLR_HALT_COP_EVENTS) = 0x50000000;
 
 	return 0;
 }
