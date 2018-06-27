@@ -142,7 +142,7 @@ int sd_save_to_file(void * buf, u32 size, const char * filename)
 {
 	FIL fp;
 	u32 res = 0;
-	res = f_open(&fp, filename, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK;
+	res = f_open(&fp, filename, FA_CREATE_ALWAYS | FA_WRITE);
 	if (res) {
 		EPRINTFARGS("Error (%d) creating file %s.\n", res, filename);
 		return 1;
@@ -688,12 +688,14 @@ void power_off()
 	i2c_send_byte(I2C_5, 0x3C, MAX77620_REG_ONOFFCNFG1, MAX77620_ONOFFCNFG1_PWR_OFF);
 }
 
-//TODO: Make it faster!!
 int dump_emmc_verify(sdmmc_storage_t *storage, u32 lba_curr, char* outFilename, emmc_part_t *part)
 {
 	FIL fp;
 	u32 prevPct = 200;
 	int res = 0;
+
+	u8 hashEm[0x20];
+	u8 hashSd[0x20];
 
 	if (f_open(&fp, outFilename, FA_READ) == FR_OK)
 	{
@@ -735,11 +737,18 @@ int dump_emmc_verify(sdmmc_storage_t *storage, u32 lba_curr, char* outFilename, 
 				f_close(&fp);
 				return 1;
 			}
-			//TODO: Replace with the config check 2.
-			if (1)
+			//TODO: Replace 2 with config variable
+			switch (2)
+			{
+			case 1:
 				res = memcmp32sparse((u32 *)bufEm, (u32 *)bufSd, num << 9);
-			else
-				res = memcmp((u32 *)bufEm, (u32 *)bufSd, num << 9);
+				break;
+			case 2:
+				se_calc_sha256(&hashEm, bufEm, num << 9);
+				se_calc_sha256(&hashSd, bufSd, num << 9);
+				res = memcmp(hashEm, hashSd, 0x20);
+				break;
+			}
 			if(res)
 			{
 				EPRINTFARGS("\nSD card and eMMC data (@LBA %08X),\ndo not match!\n\nVerification failed..\n", num, lba_curr);
@@ -880,7 +889,7 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 	FIL fp;
 	gfx_con_getpos(&gfx_con, &gfx_con.savedx,  &gfx_con.savedy);
 	gfx_printf(&gfx_con, "Filename: %s\n\n", outFilename);
-	res = f_open(&fp, outFilename, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK;
+	res = f_open(&fp, outFilename, FA_CREATE_ALWAYS | FA_WRITE);
 	if (res)
 	{
 		EPRINTFARGS("Error (%d) creating file %s.\n", res, outFilename);
@@ -972,7 +981,7 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 			gfx_con_setpos(&gfx_con, gfx_con.savedx,  gfx_con.savedy);
 			gfx_printf(&gfx_con, "Filename: %s\n\n", outFilename);
 			lbaStartPart = lba_curr;
-			res = f_open(&fp, outFilename, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK;
+			res = f_open(&fp, outFilename, FA_CREATE_ALWAYS | FA_WRITE);
 			if (res)
 			{
 				EPRINTFARGS("Error (%d) creating file %s.\n", res, outFilename);
@@ -1037,7 +1046,7 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 	f_close(&fp);
 
 	//TODO: Replace with the config check.
-	if (0)
+	if (1)
 	{
 		// Verify last part or single file backup.
 		if (dump_emmc_verify(storage, lbaStartPart, outFilename, part))
@@ -1095,13 +1104,12 @@ static void dump_emmc_selected(dumpType_t dumpType)
 	int i = 0;
 	char sdPath[64];
 	memcpy(sdPath, "Backup/", 7);
-	timer = get_tmr();
-
 	// Create Backup/Restore folders, if they do not exist.
 	f_mkdir("Backup");
 	f_mkdir("Backup/Partitions");
 	f_mkdir("Backup/Restore");
 
+	timer = get_tmr_s();
 	if (dumpType & DUMP_BOOT)
 	{
 		static const u32 BOOT_PART_SIZE = 0x400000;
@@ -1175,9 +1183,9 @@ static void dump_emmc_selected(dumpType_t dumpType)
 	}
 
 	gfx_putc(&gfx_con, '\n');
-	gfx_printf(&gfx_con, "Time taken: %d seconds.\n", (get_tmr() - timer) / 1000000);
+	gfx_printf(&gfx_con, "Time taken: %d seconds.\n", get_tmr_s() - timer);
 	sdmmc_storage_end(&storage);
-	if (res && 0) //TODO: Replace with the config check.
+	if (res && 1) //TODO: Replace with the config check.
 		gfx_printf(&gfx_con, "\n%kFinished and verified!%k\nPress any key...\n",0xFF96FF00, 0xFFCCCCCC);
 	else if (res)
 		gfx_printf(&gfx_con, "\nFinished! Press any key...\n");
@@ -1444,7 +1452,6 @@ int fix_attributes(char *path, u32 *total)
 				res = fix_attributes(path, total);
 				if (res != FR_OK)
 					break;
-				
 			}
 			// Clear file or folder path.
 			path[i] = 0;
@@ -1603,14 +1610,25 @@ void fix_battery_desync()
 
 void about()
 {
+	static const char credits[] =
+	"\nhekate     (C) 2018 naehrwert, st4rk\n\n"
+	"CTCaer mod (C) 2018 CTCaer\n"
+	" ___________________________________________\n\n"
+	"Thanks to: %kderrek, nedwill, plutoo,\n"
+	"           shuffle2, smea, thexyz, yellows8%k\n"
+	" ___________________________________________\n\n"
+	"Greetings to: fincs, hexkyz, SciresM,\n"
+	"              Shiny Quagsire, WinterMute\n"
+	" ___________________________________________\n\n"
+	"Open source and free packages used:\n\n"
+	" - FatFs R0.13b,\n"
+	"   Copyright (C) 2018, ChaN\n\n"
+	" - bcl-1.2.0,\n"
+	"   Copyright (C) 2003-2006, Marcus Geelnard\n\n"
+	" - Atmosphere (se_calculate_sha256),\n"
+	"   Copyright (C) 2018, Atmosphere-NX\n"
+	" ___________________________________________\n\n";
 	static const char octopus[] =
-	"hekate (C) 2018 naehrwert, st4rk\n"
-	"Authored by: CTCaer\n\n"
-	"Thanks to: %kderrek, nedwill, plutoo, shuffle2, smea, thexyz, yellows8%k\n\n"
-	"Greetings to: fincs, hexkyz, SciresM, Shiny Quagsire, WinterMute\n\n"
-	"Open source and free packages used:\n"
-	" - FatFs R0.13a, (Copyright (C) 2017, ChaN)\n"
-	" - bcl-1.2.0,    (Copyright (C) 2003-2006, Marcus Geelnard)\n\n"
 	"                         %k___\n"
 	"                      .-'   `'.\n"
 	"                     /         \\\n"
@@ -1633,8 +1651,8 @@ void about()
 	gfx_clear_grey(&gfx_ctxt, 0x1B);
 	gfx_con_setpos(&gfx_con, 0, 0);
 
-	gfx_printf(&gfx_con, octopus, 0xFF00CCFF, 0xFFCCCCCC,
-		0xFF00CCFF, 0xFF00FFCC, 0xFF00CCFF, 0xFFCCCCCC);
+	gfx_printf(&gfx_con, credits, 0xFF00CCFF, 0xFFCCCCCC);
+	gfx_printf(&gfx_con, octopus, 0xFF00CCFF, 0xFF00FFCC, 0xFF00CCFF, 0xFFCCCCCC);
 
 	btn_wait();
 }
@@ -1696,7 +1714,7 @@ ment_t ment_tools[] = {
 	MDEF_CAPTION("------ Misc -------", 0xFF0AB9E6),
 	MDEF_HANDLER("Dump package1", dump_package1),
 	MDEF_HANDLER("Fix SD files attributes", fix_sd_attr),
-	MDEF_HANDLER("Fix battery de-sync", &fix_battery_desync),
+	MDEF_HANDLER("Fix battery de-sync", fix_battery_desync),
 	//MDEF_MENU("Fix fuel gauge configuration", &fix_fuel_gauge_configuration),
 	MDEF_CHGLINE(),
 	MDEF_CAPTION("---- Dangerous ----", 0xFFFF0000),
