@@ -62,6 +62,8 @@ gfx_con_t gfx_con;
 //TODO: Create more macros (info, header, debug, etc) with different colors and utilize them for consistency.
 #define EPRINTF(text) gfx_printf(&gfx_con, "%k"text"%k\n", 0xFFFF0000, 0xFFCCCCCC)
 #define EPRINTFARGS(text, args...) gfx_printf(&gfx_con, "%k"text"%k\n", 0xFFFF0000, args, 0xFFCCCCCC)
+#define WPRINTF(text) gfx_printf(&gfx_con, "%k"text"%k\n", 0xFFFFDD00, 0xFFCCCCCC)
+#define WPRINTFARGS(text, args...) gfx_printf(&gfx_con, "%k"text"%k\n", 0xFFFFDD00, args, 0xFFCCCCCC)
 
 //TODO: ugly.
 sdmmc_t sd_sdmmc;
@@ -363,6 +365,7 @@ void print_fuseinfo()
 		if (sd_mount())
 		{
 			char fuseFilename[23];
+			f_mkdir("Backup");
 			f_mkdir("Backup/Dumps");
 			memcpy(fuseFilename, "Backup/Dumps/fuses.bin\0", 23);
 
@@ -397,6 +400,7 @@ void print_kfuseinfo()
 		if (sd_mount())
 		{
 			char kfuseFilename[24];
+			f_mkdir("Backup");
 			f_mkdir("Backup/Dumps");
 			memcpy(kfuseFilename, "Backup/Dumps/kfuses.bin\0", 24);
 
@@ -421,7 +425,7 @@ void print_mmc_info()
 	sdmmc_storage_t storage;
 	sdmmc_t sdmmc;
 
-	if(!sdmmc_storage_init_mmc(&storage, &sdmmc, SDMMC_4, SDMMC_BUS_WIDTH_8, 4))
+	if (!sdmmc_storage_init_mmc(&storage, &sdmmc, SDMMC_4, SDMMC_BUS_WIDTH_8, 4))
 	{
 		EPRINTF("Failed to init eMMC.");
 		goto out;
@@ -519,22 +523,30 @@ void print_mmc_info()
 				" Capacity:      %s\n"
 				" Max Rate:      %d MB/s (%d MHz)\n"
 				" Current Rate:  %d MB/s\n"
-				" Type Support:  %s\n\n",
+				" Type Support:  ",
 				storage.csd.mmca_vsn, storage.ext_csd.rev, storage.ext_csd.dev_version, storage.csd.cmdclass,
 				storage.csd.capacity == (4096 * 512) ? "High" : "Low", speed & 0xFFFF, (speed >> 16) & 0xFFFF,
-				storage.csd.busspeed, card_type_support);
+				storage.csd.busspeed);
+			gfx_con.fntsz = 8;
+			gfx_printf(&gfx_con, "%s", card_type_support);
+			gfx_con.fntsz = 16;
+			gfx_printf(&gfx_con, "\n\n", card_type_support);
 
 			u32 boot_size = storage.ext_csd.boot_mult << 17;
 			u32 rpmb_size = storage.ext_csd.rpmb_mult << 17;
 			gfx_printf(&gfx_con, "%keMMC Partitions:%k\n", 0xFF00DDFF, 0xFFCCCCCC);
-			gfx_printf(&gfx_con, " 1: %kBOOT0      %kSize: %5d KiB (LBA Sectors: 0x%07X)\n", 0xFF96FF00, 0xFFCCCCCC,
+			gfx_printf(&gfx_con, " 1: %kBOOT0      %k\n    Size: %5d KiB (LBA Sectors: 0x%07X)\n", 0xFF96FF00, 0xFFCCCCCC,
 				boot_size / 1024, boot_size / 1024 / 512);
-			gfx_printf(&gfx_con, " 2: %kBOOT1      %kSize: %5d KiB (LBA Sectors: 0x%07X)\n", 0xFF96FF00, 0xFFCCCCCC,
+			gfx_put_small_sep(&gfx_con);
+			gfx_printf(&gfx_con, " 2: %kBOOT1      %k\n    Size: %5d KiB (LBA Sectors: 0x%07X)\n", 0xFF96FF00, 0xFFCCCCCC,
 				boot_size / 1024, boot_size / 1024 / 512);
-			gfx_printf(&gfx_con, " 3: %kRPMB       %kSize: %5d KiB (LBA Sectors: 0x%07X)\n", 0xFF96FF00, 0xFFCCCCCC,
+			gfx_put_small_sep(&gfx_con);
+			gfx_printf(&gfx_con, " 3: %kRPMB       %k\n    Size: %5d KiB (LBA Sectors: 0x%07X)\n", 0xFF96FF00, 0xFFCCCCCC,
 				rpmb_size / 1024, rpmb_size / 1024 / 512);
-			gfx_printf(&gfx_con, " 0: %kGPP (USER) %kSize: %5d MiB (LBA Sectors: 0x%07X)\n\n", 0xFF96FF00, 0xFFCCCCCC,
+			gfx_put_small_sep(&gfx_con);
+			gfx_printf(&gfx_con, " 0: %kGPP (USER) %k\n    Size: %5d MiB (LBA Sectors: 0x%07X)\n\n", 0xFF96FF00, 0xFFCCCCCC,
 				storage.sec_cnt >> SECTORS_TO_MIB_COEFF, storage.sec_cnt);
+			gfx_put_small_sep(&gfx_con);
 			gfx_printf(&gfx_con, "%kGPP (eMMC USER) partition table:%k\n", 0xFF00DDFF, 0xFFCCCCCC);
 
 			sdmmc_storage_set_mmc_partition(&storage, 0);
@@ -543,9 +555,10 @@ void print_mmc_info()
 			int gpp_idx = 0;
 			LIST_FOREACH_ENTRY(emmc_part_t, part, &gpt, link)
 			{
-				gfx_printf(&gfx_con, " %02d: %k%s%k\n     Size: % 5d MiB (LBA Sectors 0x%07X, LBA Range: %08X-%08X)\n",
+				gfx_printf(&gfx_con, " %02d: %k%s%k\n     Size: % 5d MiB (LBA Sectors 0x%07X)\n     LBA Range: %08X-%08X\n",
 					gpp_idx++, 0xFFAEFD14, part->name, 0xFFCCCCCC, (part->lba_end - part->lba_start + 1) >> SECTORS_TO_MIB_COEFF,
 					part->lba_end - part->lba_start + 1, part->lba_start, part->lba_end);
+				gfx_put_small_sep(&gfx_con);
 			}
 			nx_emmc_gpt_free(&gpt);
 		}
@@ -559,10 +572,10 @@ out:
 
 void print_sdcard_info()
 {
+	static const u32 SECTORS_TO_MIB_COEFF  = 11;
+	
 	gfx_clear_grey(&gfx_ctxt, 0x1B);
 	gfx_con_setpos(&gfx_con, 0, 0);
-
-	static const u32 SECTORS_TO_MIB_COEFF  = 11;
 
 	if (sd_mount())
 	{
@@ -628,7 +641,7 @@ void print_tsec_key()
 	const pkg1_id_t *pkg1_id = pkg1_identify(pkg1);
 	if (!pkg1_id)
 	{
-		EPRINTFARGS("Could not identify package1 version to read TSEC firmware (= '%s').",
+		EPRINTFARGS("Could not identify package1 version\nto read TSEC firmware (= '%s').",
 			(char *)pkg1 + 0x10);
 		goto out;
 	}
@@ -703,12 +716,12 @@ int dump_emmc_verify(sdmmc_storage_t *storage, u32 lba_curr, char* outFilename, 
 		
 		u32 numSectorsPerIter = 0;
 		if (totalSectorsVer > 0x200000)
-			numSectorsPerIter = 8192;
+			numSectorsPerIter = 8192; //4MB Cache
 		else
-			numSectorsPerIter = 512;
+			numSectorsPerIter = 512;  //256KB Cache
 
-		u8 *bufEm = (u8 *)malloc(NX_EMMC_BLOCKSIZE * numSectorsPerIter);
-		u8 *bufSd = (u8 *)malloc(NX_EMMC_BLOCKSIZE * numSectorsPerIter);
+		u8 *bufEm = (u8 *)calloc(numSectorsPerIter, NX_EMMC_BLOCKSIZE);
+		u8 *bufSd = (u8 *)calloc(numSectorsPerIter, NX_EMMC_BLOCKSIZE);
 
 		u32 pct = (u64)((u64)(lba_curr - part->lba_start) * 100u) / (u64)(part->lba_end - part->lba_start);
 		tui_pbar(&gfx_con, 0, gfx_con.y, pct, 0xFF96FF00, 0xFF155500);
@@ -718,8 +731,9 @@ int dump_emmc_verify(sdmmc_storage_t *storage, u32 lba_curr, char* outFilename, 
 		{
 			num = MIN(totalSectorsVer, numSectorsPerIter);
 
-			if(!sdmmc_storage_read(storage, lba_curr, num, bufEm))
+			if (!sdmmc_storage_read(storage, lba_curr, num, bufEm))
 			{
+				gfx_con.fntsz = 16;
 				EPRINTFARGS("\nFailed to read %d blocks (@LBA %08X),\nfrom eMMC!\n\nVerification failed..\n",
 				num, lba_curr);
 
@@ -730,6 +744,7 @@ int dump_emmc_verify(sdmmc_storage_t *storage, u32 lba_curr, char* outFilename, 
 			}
 			if (f_read(&fp, bufSd, num << 9, NULL) != FR_OK)
 			{
+				gfx_con.fntsz = 16;
 				EPRINTFARGS("\nFailed to read %d blocks (@LBA %08X),\nfrom sd card!\n\nVerification failed..\n", num, lba_curr);
 
 				free(bufEm);
@@ -744,13 +759,15 @@ int dump_emmc_verify(sdmmc_storage_t *storage, u32 lba_curr, char* outFilename, 
 				res = memcmp32sparse((u32 *)bufEm, (u32 *)bufSd, num << 9);
 				break;
 			case 2:
+			default:
 				se_calc_sha256(&hashEm, bufEm, num << 9);
 				se_calc_sha256(&hashSd, bufSd, num << 9);
 				res = memcmp(hashEm, hashSd, 0x20);
 				break;
 			}
-			if(res)
+			if (res)
 			{
+				gfx_con.fntsz = 16;
 				EPRINTFARGS("\nSD card and eMMC data (@LBA %08X),\ndo not match!\n\nVerification failed..\n", num, lba_curr);
 
 				free(bufEm);
@@ -779,6 +796,7 @@ int dump_emmc_verify(sdmmc_storage_t *storage, u32 lba_curr, char* outFilename, 
 	}
 	else
 	{
+		gfx_con.fntsz = 16;
 		EPRINTF("\nFile not found or could not be loaded.\n\nVerification failed..\n");
 		return 1;
 	}
@@ -805,6 +823,7 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 	char partialIdxFilename[12];
 	memcpy(partialIdxFilename, "partial.idx\0", 12);
 
+	gfx_con.fntsz = 8;
 	gfx_printf(&gfx_con, "\nSD Card free space: %d MiB, Total backup size %d MiB\n\n",
 		sd_fs.free_clst * sd_fs.csize >> SECTORS_TO_MIB_COEFF,
 		totalSectors >> SECTORS_TO_MIB_COEFF);
@@ -824,6 +843,7 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 
 		if (!maxSplitParts)
 		{
+			gfx_con.fntsz = 16;
 			EPRINTF("Not enough free space for Partial Backup.");
 
 			return 0;
@@ -843,6 +863,7 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 
 		if (!maxSplitParts)
 		{
+			gfx_con.fntsz = 16;
 			EPRINTF("Not enough free space for Partial Backup.");
 
 			return 0;
@@ -892,6 +913,7 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 	res = f_open(&fp, outFilename, FA_CREATE_ALWAYS | FA_WRITE);
 	if (res)
 	{
+		gfx_con.fntsz = 16;
 		EPRINTFARGS("Error (%d) creating file %s.\n", res, outFilename);
 
 		return 0;
@@ -902,7 +924,7 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 		numSectorsPerIter = 8192;
 	else
 		numSectorsPerIter = 512;
-	u8 *buf = (u8 *)malloc(NX_EMMC_BLOCKSIZE * numSectorsPerIter);
+	u8 *buf = (u8 *)calloc(numSectorsPerIter, NX_EMMC_BLOCKSIZE);
 
 	u32 lba_curr = part->lba_start;
 	u32 bytesWritten = 0;
@@ -917,7 +939,8 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 	}
 
 	u32 num = 0;
-	while(totalSectors > 0)
+	u32 pct = 0;
+	while (totalSectors > 0)
 	{
 		if (numSplitParts != 0 && bytesWritten >= multipartSplitSize)
 		{
@@ -957,6 +980,7 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 				}
 				else
 				{
+					gfx_con.fntsz = 16;
 					EPRINTF("\nError creating partial.idx file.\n");
 
 					free(buf);
@@ -971,6 +995,7 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 						   Don\'t move the partial.idx file!\n\
 						3. Unplug and re-plug USB while pressing Vol+.\n\
 						4. Run hekate again and press Backup eMMC RAW GPP (or eMMC USER) to continue.\n");
+					gfx_con.fntsz = 16;
 
 					free(buf);
 					return 1;
@@ -984,6 +1009,7 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 			res = f_open(&fp, outFilename, FA_CREATE_ALWAYS | FA_WRITE);
 			if (res)
 			{
+				gfx_con.fntsz = 16;
 				EPRINTFARGS("Error (%d) creating file %s.\n", res, outFilename);
 
 				free(buf);
@@ -994,14 +1020,15 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 
 		retryCount = 0;
 		num = MIN(totalSectors, numSectorsPerIter);
-		while(!sdmmc_storage_read(storage, lba_curr, num, buf))
+		while (!sdmmc_storage_read(storage, lba_curr, num, buf))
 		{
-			EPRINTFARGS("Error reading %d blocks @ LBA %08X from eMMC (try %d), retrying...",
+			EPRINTFARGS("Error reading %d blocks @ LBA %08X,\nfrom eMMC (try %d), retrying...",
 				num, lba_curr, ++retryCount);
 
 			sleep(150000);
 			if (retryCount >= 3)
 			{
+				gfx_con.fntsz = 16;
 				EPRINTFARGS("\nFailed to read %d blocks @ LBA %08X\nfrom eMMC. Aborting..\n",
 				num, lba_curr);
 				EPRINTF("\nPress any key and try again...\n");
@@ -1014,6 +1041,7 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 		res = f_write(&fp, buf, NX_EMMC_BLOCKSIZE * num, NULL);
 		if (res)
 		{
+			gfx_con.fntsz = 16;
 			EPRINTFARGS("\nFatal error (%d) when writing to SD Card", res);
 			EPRINTF("\nPress any key and try again...\n");
 
@@ -1021,7 +1049,7 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 			f_close(&fp);
 			return 0;
 		}
-		u32 pct = (u64)((u64)(lba_curr - part->lba_start) * 100u) / (u64)(part->lba_end - part->lba_start);
+		pct = (u64)((u64)(lba_curr - part->lba_start) * 100u) / (u64)(part->lba_end - part->lba_start);
 		if (pct != prevPct)
 		{
 			tui_pbar(&gfx_con, 0, gfx_con.y, pct, 0xFFCCCCCC, 0xFF555555);
@@ -1060,8 +1088,9 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 			tui_pbar(&gfx_con, 0, gfx_con.y, 100, 0xFF96FF00, 0xFF155500);
 	}
 
+	gfx_con.fntsz = 16;
 	// Remove partial backup index file if no fatal errors occurred.
-	if(isSmallSdCard)
+	if (isSmallSdCard)
 	{
 		f_unlink(partialIdxFilename);
 		gfx_printf(&gfx_con, "%k\n\nYou can now join the files\nand get the complete eMMC RAW GPP backup.", 0xFFCCCCCC);
@@ -1073,13 +1102,14 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 
 typedef enum
 {
-	DUMP_BOOT = 1,
-	DUMP_SYSTEM = 2,
-	DUMP_USER = 4,
-	DUMP_RAW = 8
-} dumpType_t;
+	PART_BOOT =   (1 << 0),
+	PART_SYSTEM = (1 << 1),
+	PART_USER =   (1 << 2),
+	PART_RAW =    (1 << 3),
+	PART_GP_ALL = (1 << 7)
+} emmcPartType_t;
 
-static void dump_emmc_selected(dumpType_t dumpType)
+static void dump_emmc_selected(emmcPartType_t dumpType)
 {
 	int res = 0;
 	u32 timer = 0;
@@ -1095,7 +1125,7 @@ static void dump_emmc_selected(dumpType_t dumpType)
 
 	sdmmc_storage_t storage;
 	sdmmc_t sdmmc;
-	if(!sdmmc_storage_init_mmc(&storage, &sdmmc, SDMMC_4, SDMMC_BUS_WIDTH_8, 4))
+	if (!sdmmc_storage_init_mmc(&storage, &sdmmc, SDMMC_4, SDMMC_BUS_WIDTH_8, 4))
 	{
 		EPRINTF("Failed to init eMMC.");
 		goto out;
@@ -1108,11 +1138,12 @@ static void dump_emmc_selected(dumpType_t dumpType)
 	f_mkdir("Backup");
 	f_mkdir("Backup/Partitions");
 	f_mkdir("Backup/Restore");
+	f_mkdir("Backup/Restore/Partitions");
 
 	timer = get_tmr_s();
-	if (dumpType & DUMP_BOOT)
+	if (dumpType & PART_BOOT)
 	{
-		static const u32 BOOT_PART_SIZE = 0x400000;
+		const u32 BOOT_PART_SIZE = storage.ext_csd.boot_mult << 17;
 
 		emmc_part_t bootPart;
 		memset(&bootPart, 0, sizeof(bootPart));
@@ -1134,19 +1165,19 @@ static void dump_emmc_selected(dumpType_t dumpType)
 		}
 	}
 
-	if ((dumpType & DUMP_SYSTEM) || (dumpType & DUMP_USER) || (dumpType & DUMP_RAW))
+	if ((dumpType & PART_SYSTEM) || (dumpType & PART_USER) || (dumpType & PART_RAW))
 	{
 		sdmmc_storage_set_mmc_partition(&storage, 0);
 
-		if ((dumpType & DUMP_SYSTEM) || (dumpType & DUMP_USER))
+		if ((dumpType & PART_SYSTEM) || (dumpType & PART_USER))
 		{
 			LIST_INIT(gpt);
 			nx_emmc_gpt_parse(&gpt, &storage);
 			LIST_FOREACH_ENTRY(emmc_part_t, part, &gpt, link)
 			{
-				if ((dumpType & DUMP_USER) == 0 && !strcmp(part->name, "USER"))
+				if ((dumpType & PART_USER) == 0 && !strcmp(part->name, "USER"))
 					continue;
-				if ((dumpType & DUMP_SYSTEM) == 0 && strcmp(part->name, "USER"))
+				if ((dumpType & PART_SYSTEM) == 0 && strcmp(part->name, "USER"))
 					continue;
 
 				gfx_printf(&gfx_con, "%k%02d: %s (%07X-%07X)%k\n", 0xFF00DDFF, i++,
@@ -1162,7 +1193,7 @@ static void dump_emmc_selected(dumpType_t dumpType)
 			nx_emmc_gpt_free(&gpt);
 		}
 
-		if (dumpType & DUMP_RAW)
+		if (dumpType & PART_RAW)
 		{
 			// Get GP partition size dynamically. 
 			const u32 RAW_AREA_NUM_SECTORS = storage.sec_cnt;
@@ -1195,10 +1226,10 @@ out:;
 	btn_wait();
 }
 
-void dump_emmc_system() { dump_emmc_selected(DUMP_SYSTEM); }
-void dump_emmc_user() { dump_emmc_selected(DUMP_USER); }
-void dump_emmc_boot() { dump_emmc_selected(DUMP_BOOT); }
-void dump_emmc_rawnand() { dump_emmc_selected(DUMP_RAW); }
+void dump_emmc_system() { dump_emmc_selected(PART_SYSTEM); }
+void dump_emmc_user() { dump_emmc_selected(PART_USER); }
+void dump_emmc_boot() { dump_emmc_selected(PART_BOOT); }
+void dump_emmc_rawnand() { dump_emmc_selected(PART_RAW); }
 
 void dump_package1()
 {
@@ -1215,7 +1246,7 @@ void dump_package1()
 
 	sdmmc_storage_t storage;
 	sdmmc_t sdmmc;
-	if(!sdmmc_storage_init_mmc(&storage, &sdmmc, SDMMC_4, SDMMC_BUS_WIDTH_8, 4))
+	if (!sdmmc_storage_init_mmc(&storage, &sdmmc, SDMMC_4, SDMMC_BUS_WIDTH_8, 4))
 	{
 		EPRINTF("Failed to init eMMC.");
 		goto out;
@@ -1228,6 +1259,7 @@ void dump_package1()
 	const pk11_hdr_t *hdr = (pk11_hdr_t *)(pkg1 + pkg1_id->pkg11_off + 0x20);
 	if (!pkg1_id)
 	{
+		gfx_con.fntsz = 8;
 		EPRINTFARGS("Could not identify package1 version to read TSEC firmware (= '%s').", (char *)pkg1 + 0x10);
 		goto out;
 	}
@@ -1255,6 +1287,7 @@ void dump_package1()
 	gfx_printf(&gfx_con, "%kWarmboot ofst:       %k0x%05X\n\n", 0xFFC7EA46, 0xFFCCCCCC, hdr->wb_off);
 
 	// Dump package1.
+	f_mkdir("Backup");
 	f_mkdir("Backup/pkg1");
 	if (sd_save_to_file(pkg1, 0x40000, "Backup/pkg1/pkg1_decr.bin")) {
 		EPRINTF("\nFailed to create pkg1_decr.bin");
@@ -1380,7 +1413,7 @@ void toggle_autorcm(){
 	gfx_clear_grey(&gfx_ctxt, 0x1B);
 	gfx_con_setpos(&gfx_con, 0, 0);
 
-	if(!sdmmc_storage_init_mmc(&storage, &sdmmc, SDMMC_4, SDMMC_BUS_WIDTH_8, 4))
+	if (!sdmmc_storage_init_mmc(&storage, &sdmmc, SDMMC_4, SDMMC_BUS_WIDTH_8, 4))
 	{
 		EPRINTF("Failed to init eMMC.");
 		goto out;
@@ -1481,19 +1514,150 @@ void fix_sd_attr(){
 	btn_wait();
 }
 
-void print_fuel_gauge_regs()
+void print_fuel_gauge_info()
+{
+	int value = 0;
+
+	gfx_printf(&gfx_con, "%kFuel Gauge IC Info:\n%k", 0xFF00DDFF, 0xFFCCCCCC);
+
+	max17050_get_property(MAX17050_Age, &value);
+	gfx_printf(&gfx_con, "Age:                    %3d%\n", value);
+
+	max17050_get_property(MAX17050_Cycles, &value);
+	gfx_printf(&gfx_con, "Charge cycle count:     %4d\n", value);
+
+	max17050_get_property(MAX17050_TEMP, &value);
+	if (value >= 0)
+		gfx_printf(&gfx_con, "Battery temperature:    %d.%d oC\n", value / 10, value % 10);
+	else
+		gfx_printf(&gfx_con, "Battery temperature:    -%d.%d oC\n", ~value / 10, (~value) % 10);
+
+	max17050_get_property(MAX17050_Current, &value);
+	if (value >= 0)
+		gfx_printf(&gfx_con, "Current now:            %d mA\n", value / 1000);
+	else
+		gfx_printf(&gfx_con, "Current now:            -%d mA\n", ~value / 1000);
+
+	max17050_get_property(MAX17050_AvgCurrent, &value);
+	if (value >= 0)
+		gfx_printf(&gfx_con, "Current average:        %d mA\n", value / 1000);
+	else
+		gfx_printf(&gfx_con, "Current average:        -%d mA\n", ~value / 1000);
+
+	max17050_get_property(MAX17050_MinVolt, &value);
+	gfx_printf(&gfx_con, "Min voltage reached:    %4d mV\n", value);
+
+	max17050_get_property(MAX17050_MaxVolt, &value);
+	gfx_printf(&gfx_con, "Max voltage reached:    %4d mV\n", value);
+
+	max17050_get_property(MAX17050_V_empty, &value);
+	gfx_printf(&gfx_con, "Empty voltage (design): %4d mV\n", value);
+
+	max17050_get_property(MAX17050_VCELL, &value);
+	gfx_printf(&gfx_con, "Voltage now:            %4d mV\n", value);
+
+	max17050_get_property(MAX17050_OCVInternal, &value);
+	gfx_printf(&gfx_con, "Voltage open-circuit:   %4d mV\n", value);
+
+	max17050_get_property(MAX17050_RepSOC, &value);
+	gfx_printf(&gfx_con, "Capacity now:           %3d%\n", value >> 8);
+
+	max17050_get_property(MAX17050_RepCap, &value);
+	gfx_printf(&gfx_con, "Capacity now:           %4d mAh\n", value);
+
+	max17050_get_property(MAX17050_FullCAP, &value);
+	gfx_printf(&gfx_con, "Capacity full:          %4d mAh\n", value);
+
+	max17050_get_property(MAX17050_DesignCap, &value);
+	gfx_printf(&gfx_con, "Capacity (design):      %4d mAh\n", value);
+}
+
+void print_battery_charger_info()
+{
+	int value = 0;
+
+	gfx_printf(&gfx_con, "%k\n\nBattery Charger IC Info:\n%k", 0xFF00DDFF, 0xFFCCCCCC);
+
+	bq24193_get_property(BQ24193_InputVoltageLimit, &value);
+	gfx_printf(&gfx_con, "Input voltage limit:       %4d mV\n", value);
+
+	bq24193_get_property(BQ24193_InputCurrentLimit, &value);
+	gfx_printf(&gfx_con, "Input current limit:       %4d mA\n", value);
+
+	bq24193_get_property(BQ24193_SystemMinimumVoltage, &value);
+	gfx_printf(&gfx_con, "Min voltage limit:         %4d mV\n", value);
+
+	bq24193_get_property(BQ24193_FastChargeCurrentLimit, &value);
+	gfx_printf(&gfx_con, "Fast charge current limit: %4d mA\n", value);
+
+	bq24193_get_property(BQ24193_ChargeVoltageLimit, &value);
+	gfx_printf(&gfx_con, "Charge voltage limit:      %4d mV\n", value);
+
+	bq24193_get_property(BQ24193_ThermalRegulation, &value);
+	gfx_printf(&gfx_con, "Thermal threshold:         %4d oC\n", value);
+
+	bq24193_get_property(BQ24193_ChargeStatus, &value);
+	gfx_printf(&gfx_con, "Charge status:              ");
+	switch (value)
+	{
+	case 0:
+		gfx_printf(&gfx_con, "Not charging\n");
+		break;
+	case 1:
+		gfx_printf(&gfx_con, "Pre-charging\n");
+		break;
+	case 2:
+		gfx_printf(&gfx_con, "Fast charging\n");
+		break;
+	case 3:
+		gfx_printf(&gfx_con, "Charge terminated\n");
+		break;
+	default:
+		gfx_printf(&gfx_con, "Unknown (%d)\n", value);
+		break;
+	}
+	bq24193_get_property(BQ24193_TempStatus, &value);
+	gfx_printf(&gfx_con, "Temperature status:         ");
+	switch (value)
+	{
+	case 0:
+		gfx_printf(&gfx_con, "Normal\n");
+		break;
+	case 2:
+		gfx_printf(&gfx_con, "Warm\n");
+		break;
+	case 3:
+		gfx_printf(&gfx_con, "Cool\n");
+		break;
+	case 5:
+		gfx_printf(&gfx_con, "Cold\n");
+		break;
+	case 6:
+		gfx_printf(&gfx_con, "Hot\n");
+		break;
+	default:
+		gfx_printf(&gfx_con, "Unknown (%d)\n", value);
+		break;
+	}
+}
+
+void print_battery_info()
 {
 	gfx_clear_grey(&gfx_ctxt, 0x1B);
 	gfx_con_setpos(&gfx_con, 0, 0);
 
+	print_fuel_gauge_info();
+
+	print_battery_charger_info();
+
 	u8 *buf = (u8 *)malloc(0x100 * 2);
 
-	gfx_printf(&gfx_con, "%kBattery Fuel Gauge Registers:\n\n%k", 0xFF00DDFF, 0xFFCCCCCC);
+	gfx_printf(&gfx_con, "%k\n\nBattery Fuel Gauge Registers:\n%k", 0xFF00DDFF, 0xFFCCCCCC);
 
 	for (int i = 0; i < 0x200; i += 2)
 	{
 		i2c_recv_buf_small(buf + i, 2, I2C_1, 0x36, i >> 1);
-		sleep(5000);
+		sleep(2500);
 	}
 
 	gfx_hexdump(&gfx_con, 0, (u8 *)buf, 0x200);
@@ -1507,6 +1671,7 @@ void print_fuel_gauge_regs()
 		if (sd_mount())
 		{
 			char fuelFilename[28];
+			f_mkdir("Backup");
 			f_mkdir("Backup/Dumps");
 			memcpy(fuelFilename, "Backup/Dumps/fuel_gauge.bin\0", 28);
 
@@ -1652,10 +1817,25 @@ void about()
 	gfx_con_setpos(&gfx_con, 0, 0);
 
 	gfx_printf(&gfx_con, credits, 0xFF00CCFF, 0xFFCCCCCC);
+	gfx_con.fntsz = 8;
 	gfx_printf(&gfx_con, octopus, 0xFF00CCFF, 0xFF00FFCC, 0xFF00CCFF, 0xFFCCCCCC);
 
 	btn_wait();
 }
+
+/*ment_t ment_options[] = {
+	MDEF_BACK(),
+	MDEF_CHGLINE(),
+	MDEF_HANDLER("Auto boot", config_autoboot),
+	MDEF_HANDLER("Boot time delay", config_bootdelay),
+	MDEF_HANDLER("Custom boot logo", config_customlogo),
+	MDEF_END()
+};*/
+
+menu_t menu_options = {
+	ment_options,
+	"Launch options", 0, 0
+};
 
 ment_t ment_cinfo[] = {
 	MDEF_BACK(),
@@ -1670,7 +1850,7 @@ ment_t ment_cinfo[] = {
 	MDEF_HANDLER("Print SD Card info", print_sdcard_info),
 	MDEF_CHGLINE(),
 	MDEF_CAPTION("------ Misc ------", 0xFF0AB9E6),
-	MDEF_HANDLER("Print fuel gauge info", print_fuel_gauge_regs),
+	MDEF_HANDLER("Print battery info", print_battery_info),
 	MDEF_END()
 };
 menu_t menu_cinfo = {
@@ -1697,27 +1877,59 @@ ment_t ment_autorcm[] = {
 
 menu_t menu_autorcm = {
 	ment_autorcm,
-	"AutoRCM", 0, 0
+	"Toggle AutoRCM ON/OFF", 0, 0
+};
+
+/*ment_t ment_restore[] = {
+	MDEF_BACK(),
+	MDEF_CHGLINE(),
+	MDEF_CAPTION("------ Full --------", 0xFF0AB9E6),
+	MDEF_HANDLER("Restore eMMC BOOT0/1", restore_emmc_boot),
+	MDEF_HANDLER("Restore eMMC RAW GPP (exFAT only)", restore_emmc_rawnand),
+	MDEF_CHGLINE(),
+	MDEF_CAPTION("-- GPP Partitions --", 0xFF0AB9E6),
+	MDEF_HANDLER("Restore GPP partitions", restore_emmc_gpp_parts),
+	MDEF_END()
+};
+
+menu_t menu_restore = {
+	ment_restore,
+	"Restore options", 0, 0
+};*/
+
+ment_t ment_backup[] = {
+	MDEF_BACK(),
+	MDEF_CHGLINE(),
+	MDEF_CAPTION("------ Full --------", 0xFF0AB9E6),
+	MDEF_HANDLER("Backup eMMC BOOT0/1", dump_emmc_boot),
+	MDEF_HANDLER("Backup eMMC RAW GPP", dump_emmc_rawnand),
+	MDEF_CHGLINE(),
+	MDEF_CAPTION("-- GPP Partitions --", 0xFF0AB9E6),
+	MDEF_HANDLER("Backup eMMC SYS", dump_emmc_system),
+	MDEF_HANDLER("Backup eMMC USER", dump_emmc_user),
+	MDEF_END()
+};
+
+menu_t menu_backup = {
+	ment_backup,
+	"Backup options", 0, 0
 };
 
 ment_t ment_tools[] = {
 	MDEF_BACK(),
 	MDEF_CHGLINE(),
-	MDEF_CAPTION("------ Full --------", 0xFF0AB9E6),
-	MDEF_HANDLER("Backup eMMC RAW GPP", dump_emmc_rawnand),
-	MDEF_HANDLER("Backup eMMC BOOT0/1", dump_emmc_boot),
+	MDEF_CAPTION("-- Backup & Restore --", 0xFF0AB9E6),
+	MDEF_MENU("Backup", &menu_backup),
+	//MDEF_MENU("Restore", &menu_restore),
+	//MDEF_HANDLER("Verification options", config_verification),
 	MDEF_CHGLINE(),
-	MDEF_CAPTION("-- GPP Partitions --", 0xFF0AB9E6),
-	MDEF_HANDLER("Backup eMMC SYS", dump_emmc_system),
-	MDEF_HANDLER("Backup eMMC USER", dump_emmc_user),
-	MDEF_CHGLINE(),
-	MDEF_CAPTION("------ Misc -------", 0xFF0AB9E6),
+	MDEF_CAPTION("-------- Misc --------", 0xFF0AB9E6),
 	MDEF_HANDLER("Dump package1", dump_package1),
 	MDEF_HANDLER("Fix SD files attributes", fix_sd_attr),
 	MDEF_HANDLER("Fix battery de-sync", fix_battery_desync),
-	//MDEF_MENU("Fix fuel gauge configuration", &fix_fuel_gauge_configuration),
+	//MDEF_HANDLER("Fix fuel gauge configuration", fix_fuel_gauge_configuration),
 	MDEF_CHGLINE(),
-	MDEF_CAPTION("---- Dangerous ----", 0xFFFF0000),
+	MDEF_CAPTION("------ Dangerous -----", 0xFFFF0000),
 	MDEF_MENU("AutoRCM", &menu_autorcm),
 	MDEF_END()
 };
@@ -1729,6 +1941,7 @@ menu_t menu_tools = {
 
 ment_t ment_top[] = {
 	MDEF_HANDLER("Launch firmware", launch_firmware),
+	//MDEF_MENU("Launch options", &menu_options),
 	MDEF_CAPTION("---------------", 0xFF444444),
 	MDEF_MENU("Tools", &menu_tools),
 	MDEF_MENU("Console info", &menu_cinfo),
