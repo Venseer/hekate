@@ -10,10 +10,25 @@ Custom Nintendo Switch bootloader, firmware patcher, and more.
 
 The ipl can be configured via 'hekate_ipl.ini' (if it is present on the SD card). Each ini section represents a boot entry, except for the special section 'config' that controls the global configuration.
 
-### Possible key/value combinations:
+
+There are four possible type of entries. "**[ ]**": Boot entry, "**{ }**": Caption, "**#**": Comment, "*newline*": .ini cosmetic newline.
+
+
+### Configuration keys/values when boot entry is **config**:
 
 | Config option      | Description                                                |
 | ------------------ | ---------------------------------------------------------- |
+| autoboot=0         | 0: Disable, #: Boot entry number to auto boot.             |
+| bootwait=3         | 0: Disable (Having VOL- pressed since injection goes to menu. It also disables bootlogo.), #: Time to wait for **VOL-** to enter menu. |
+| customlogo=0       | 0: Use default hekate bootlogo, 1: Use bootlogo.bmp.       |
+| verification=2     | 0: Disable Backup/Restore verification, 1: Sparse (block based, fast and not 100% reliable), 2: Full (sha256 based, slow and 100% reliable). |
+
+
+### Possible boot entry key/value combinations:
+
+| Config option      | Description                                                |
+| ------------------ | ---------------------------------------------------------- |
+| logopath={SD path} | If global customlogo is 1 and logopath empty, bootlogo.bmp will be used. If logopath exists, it will load the specified bitmap. |
 | warmboot={SD path} | Replaces the warmboot binary                               |
 | secmon={SD path}   | Replaces the security monitor binary                       |
 | kernel={SD path}   | Replaces the kernel binary                                 |
@@ -21,6 +36,8 @@ The ipl can be configured via 'hekate_ipl.ini' (if it is present on the SD card)
 | fullsvcperm=1      | Disables SVC verification                                  |
 | debugmode=1        | Enables Debug mode                                         |
 
+
+You can find a template [Here](./res/hekate_ipl_template.ini)
 
 
 ```
@@ -33,7 +50,7 @@ Greetings to: fincs, hexkyz, SciresM, Shiny Quagsire, WinterMute.
 Open source and free packages used:
  - FatFs R0.13a, Copyright (C) 2017, ChaN
  - bcl-1.2.0, Copyright (C) 2003-2006, Marcus Geelnard
- - Atmosphère (se_calculate_sha256), Copyright (C) 2018, Atmosphère-NX
+ - Atmosphère (SE sha256, prc id kernel patches), Copyright (C) 2018, Atmosphère-NX
 
                          ___
                       .-'   `'.

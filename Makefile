@@ -10,6 +10,7 @@ SOURCEDIR := ipl
 OBJS = $(addprefix $(BUILD)/, \
 	start.o \
 	main.o \
+	config.o \
 	btn.o \
 	clock.o \
 	cluster.o \
@@ -51,6 +52,9 @@ LDFLAGS = $(ARCH) -nostartfiles -lgcc -Wl,--nmagic,--gc-sections
 .PHONY: all clean
 
 all: $(TARGET).bin
+	@echo -n "Payload size is "
+	@wc -c < $(TARGET).bin
+	@echo "Max size is 126296 Bytes."
 
 clean:
 	@rm -rf $(OBJS)

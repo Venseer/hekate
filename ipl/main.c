@@ -54,6 +54,7 @@
 #include "lz.h"
 #include "max17050.h"
 #include "bq24193.h"
+#include "config.h"
 
 //TODO: ugly.
 gfx_ctxt_t gfx_ctxt;
@@ -74,6 +75,8 @@ int sd_mounted;
 #ifdef MENU_LOGO_ENABLE
 u8 *Kc_MENU_LOGO;
 #endif //MENU_LOGO_ENABLE
+
+hekate_config h_cfg;
 
 int sd_mount()
 {
@@ -146,7 +149,7 @@ int sd_save_to_file(void * buf, u32 size, const char * filename)
 	u32 res = 0;
 	res = f_open(&fp, filename, FA_CREATE_ALWAYS | FA_WRITE);
 	if (res) {
-		EPRINTFARGS("Error (%d) creating file %s.\n", res, filename);
+		EPRINTFARGS("Error (%d) creating file\n%s.\n", res, filename);
 		return 1;
 	}
 
@@ -752,8 +755,8 @@ int dump_emmc_verify(sdmmc_storage_t *storage, u32 lba_curr, char* outFilename, 
 				f_close(&fp);
 				return 1;
 			}
-			//TODO: Replace 2 with config variable
-			switch (2)
+
+			switch (h_cfg.verification)
 			{
 			case 1:
 				res = memcmp32sparse((u32 *)bufEm, (u32 *)bufSd, num << 9);
@@ -948,8 +951,7 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 			memset(&fp, 0, sizeof(fp));
 			currPartIdx++;
 
-			//TODO: Replace with the config check.
-			if (1)
+			if (h_cfg.verification)
 			{
 				// Verify part.
 				if (dump_emmc_verify(storage, lbaStartPart, outFilename, part))
@@ -1073,8 +1075,7 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 	free(buf);
 	f_close(&fp);
 
-	//TODO: Replace with the config check.
-	if (1)
+	if (h_cfg.verification)
 	{
 		// Verify last part or single file backup.
 		if (dump_emmc_verify(storage, lbaStartPart, outFilename, part))
@@ -1214,9 +1215,10 @@ static void dump_emmc_selected(emmcPartType_t dumpType)
 	}
 
 	gfx_putc(&gfx_con, '\n');
-	gfx_printf(&gfx_con, "Time taken: %d seconds.\n", get_tmr_s() - timer);
+	timer = get_tmr_s() - timer;
+	gfx_printf(&gfx_con, "Time taken: %dm %ds.\n", timer / 60, timer % 60);
 	sdmmc_storage_end(&storage);
-	if (res && 1) //TODO: Replace with the config check.
+	if (res && h_cfg.verification)
 		gfx_printf(&gfx_con, "\n%kFinished and verified!%k\nPress any key...\n",0xFF96FF00, 0xFFCCCCCC);
 	else if (res)
 		gfx_printf(&gfx_con, "\nFinished! Press any key...\n");
@@ -1230,6 +1232,256 @@ void dump_emmc_system() { dump_emmc_selected(PART_SYSTEM); }
 void dump_emmc_user() { dump_emmc_selected(PART_USER); }
 void dump_emmc_boot() { dump_emmc_selected(PART_BOOT); }
 void dump_emmc_rawnand() { dump_emmc_selected(PART_RAW); }
+
+int restore_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
+{
+	static const u32 SECTORS_TO_MIB_COEFF = 11;
+
+	u32 totalSectors = part->lba_end - part->lba_start + 1;
+	u32 lbaStartPart = part->lba_start;
+	int res = 0;
+	char *outFilename = sd_path;
+
+	gfx_con.fntsz = 8;
+
+	FIL fp;
+	gfx_con_getpos(&gfx_con, &gfx_con.savedx,  &gfx_con.savedy);
+	gfx_printf(&gfx_con, "\nFilename: %s\n", outFilename);
+
+	res = f_open(&fp, outFilename, FA_READ);
+	if (res)
+	{
+		WPRINTFARGS("Error (%d) while opening backup. Continuing...\n", res);
+		gfx_con.fntsz = 16;
+
+		return 0;
+	}
+	//TODO: Should we keep this check?
+	else if ((f_size(&fp) >> 9) != totalSectors)
+	{
+		gfx_con.fntsz = 16;
+		EPRINTF("Size of sd card backup does not match,\neMMC's selected part size.\n");
+		f_close(&fp);
+
+		return 0;
+	}
+	else
+		gfx_printf(&gfx_con, "\nTotal restore size: %d MiB.\n\n", (f_size(&fp) >> 9) >> SECTORS_TO_MIB_COEFF);
+
+	u32 numSectorsPerIter = 0;
+	if (totalSectors > 0x200000)
+		numSectorsPerIter = 8192; //4MB Cache
+	else
+		numSectorsPerIter = 512;  //256KB Cache
+
+	u8 *buf = (u8 *)calloc(numSectorsPerIter, NX_EMMC_BLOCKSIZE);
+
+	u32 lba_curr = part->lba_start;
+	u32 bytesWritten = 0;
+	u32 prevPct = 200;
+	int retryCount = 0;
+
+	u32 num = 0;
+	u32 pct = 0;
+	while (totalSectors > 0)
+	{
+		retryCount = 0;
+		num = MIN(totalSectors, numSectorsPerIter);
+
+		res = f_read(&fp, buf, NX_EMMC_BLOCKSIZE * num, NULL);
+		if (res)
+		{
+			gfx_con.fntsz = 16;
+			EPRINTFARGS("\nFatal error (%d) when reading from SD Card", res);
+			EPRINTF("\nYour device may be in an inoperative state!\n\nPress any key and try again now...\n");
+
+			free(buf);
+			f_close(&fp);
+			return 0;
+		}
+		while (!sdmmc_storage_write(storage, lba_curr, num, buf))
+		{
+			EPRINTFARGS("Error writing %d blocks @ LBA %08X\nto eMMC (try %d), retrying...",
+				num, lba_curr, ++retryCount);
+
+			sleep(150000);
+			if (retryCount >= 3)
+			{
+				gfx_con.fntsz = 16;
+				EPRINTFARGS("\nFailed to write %d blocks @ LBA %08X\nfrom eMMC. Aborting..\n",
+				num, lba_curr);
+				EPRINTF("\nYour device may be in an inoperative state!\n\nPress any key and try again...\n");
+
+				free(buf);
+				f_close(&fp);
+				return 0;
+			}
+		}
+		pct = (u64)((u64)(lba_curr - part->lba_start) * 100u) / (u64)(part->lba_end - part->lba_start);
+		if (pct != prevPct)
+		{
+			tui_pbar(&gfx_con, 0, gfx_con.y, pct, 0xFFCCCCCC, 0xFF555555);
+			prevPct = pct;
+		}
+
+		lba_curr += num;
+		totalSectors -= num;
+		bytesWritten += num * NX_EMMC_BLOCKSIZE;
+	}
+	tui_pbar(&gfx_con, 0, gfx_con.y, 100, 0xFFCCCCCC, 0xFF555555);
+
+	// Restore operation ended successfully.
+	free(buf);
+	f_close(&fp);
+
+	if (h_cfg.verification)
+	{
+		// Verify restored data.
+		if (dump_emmc_verify(storage, lbaStartPart, outFilename, part))
+		{
+			EPRINTF("\nPress any key and try again...\n");
+
+			free(buf);
+			return 0;
+		}
+		else
+			tui_pbar(&gfx_con, 0, gfx_con.y, 100, 0xFF96FF00, 0xFF155500);
+	}
+
+	gfx_con.fntsz = 16;
+	gfx_puts(&gfx_con, "\n\n");
+
+	return 1;
+}
+
+static void restore_emmc_selected(emmcPartType_t restoreType)
+{
+	int res = 0;
+	u32 timer = 0;
+	gfx_clear_grey(&gfx_ctxt, 0x1B);
+	gfx_con_setpos(&gfx_con, 0, 0);
+
+	gfx_printf(&gfx_con, "%kThis is a dangerous operation\nand may render your device inoperative!\n\n", 0xFFFFDD00);
+	gfx_printf(&gfx_con, "Are you really sure?\n\n%k", 0xFFCCCCCC);
+	if ((restoreType & PART_BOOT) || (restoreType & PART_GP_ALL))
+	{
+		gfx_puts(&gfx_con, "The mode you selected will only restore\nthe partitions that it can find.\n");
+		gfx_puts(&gfx_con, "If the appropriate named file is not found,\nit will skip it and continue with the next.\n\n");
+	}
+	gfx_con_getpos(&gfx_con, &gfx_con.savedx,  &gfx_con.savedy);
+
+	u8 value = 10;
+	while (value > 0)
+	{
+		gfx_con_setpos(&gfx_con, gfx_con.savedx, gfx_con.savedy);
+		gfx_printf(&gfx_con, "%kWait... (%ds)    %k", 0xFF888888, value, 0xFFCCCCCC);
+		sleep(1000000);
+		value--;
+	}
+	gfx_con_setpos(&gfx_con, gfx_con.savedx, gfx_con.savedy);
+
+	gfx_puts(&gfx_con, "Press POWER to Continue.\nPress VOL to go to the menu.\n\n\n");
+
+	u32 btn = btn_wait();
+	if (!(btn & BTN_POWER))
+		goto out;
+
+	if (!sd_mount())
+		goto out;
+
+	sdmmc_storage_t storage;
+	sdmmc_t sdmmc;
+	if (!sdmmc_storage_init_mmc(&storage, &sdmmc, SDMMC_4, SDMMC_BUS_WIDTH_8, 4))
+	{
+		EPRINTF("Failed to init eMMC.");
+		goto out;
+	}
+
+	int i = 0;
+	char sdPath[64];
+	memcpy(sdPath, "Backup/Restore/", 15);
+
+	timer = get_tmr_s();
+	if (restoreType & PART_BOOT)
+	{
+		const u32 BOOT_PART_SIZE = storage.ext_csd.boot_mult << 17;
+
+		emmc_part_t bootPart;
+		memset(&bootPart, 0, sizeof(bootPart));
+		bootPart.lba_start = 0;
+		bootPart.lba_end = (BOOT_PART_SIZE/NX_EMMC_BLOCKSIZE)-1;
+		for (i = 0; i < 2; i++)
+		{
+			memcpy(bootPart.name, "BOOT", 4);
+			bootPart.name[4] = (u8)('0' + i);
+			bootPart.name[5] = 0;
+
+			gfx_printf(&gfx_con, "%k%02d: %s (%07X-%07X)%k\n", 0xFF00DDFF, i,
+				bootPart.name, bootPart.lba_start, bootPart.lba_end, 0xFFCCCCCC);
+
+			sdmmc_storage_set_mmc_partition(&storage, i+1);
+
+			strcpy(sdPath + 15, bootPart.name);
+			res = restore_emmc_part(sdPath, &storage, &bootPart);
+		}
+	}
+
+	if (restoreType & PART_GP_ALL)
+	{
+		sdmmc_storage_set_mmc_partition(&storage, 0);
+
+		LIST_INIT(gpt);
+		nx_emmc_gpt_parse(&gpt, &storage);
+		LIST_FOREACH_ENTRY(emmc_part_t, part, &gpt, link)
+		{
+			gfx_printf(&gfx_con, "%k%02d: %s (%07X-%07X)%k\n", 0xFF00DDFF, i++,
+				part->name, part->lba_start, part->lba_end, 0xFFCCCCCC);
+
+			memcpy(sdPath, "Backup/Restore/Partitions/", 26);
+			strcpy(sdPath + 26, part->name);
+			res = restore_emmc_part(sdPath, &storage, part);
+		}
+		nx_emmc_gpt_free(&gpt);
+	}
+
+	if (restoreType & PART_RAW)
+	{
+		// Get GP partition size dynamically. 
+		const u32 RAW_AREA_NUM_SECTORS = storage.sec_cnt;
+
+		emmc_part_t rawPart;
+		memset(&rawPart, 0, sizeof(rawPart));
+		rawPart.lba_start = 0;
+		rawPart.lba_end = RAW_AREA_NUM_SECTORS-1;
+		strcpy(rawPart.name, "rawnand.bin");
+		{
+			gfx_printf(&gfx_con, "%k%02d: %s (%07X-%07X)%k\n", 0xFF00DDFF, i++,
+				rawPart.name, rawPart.lba_start, rawPart.lba_end, 0xFFCCCCCC);
+
+			strcpy(sdPath + 15, rawPart.name);
+			res = restore_emmc_part(sdPath, &storage, &rawPart);
+		}
+	}
+
+	gfx_putc(&gfx_con, '\n');
+	timer = get_tmr_s() - timer;
+	gfx_printf(&gfx_con, "Time taken: %dm %ds.\n", timer / 60, timer % 60);
+	sdmmc_storage_end(&storage);
+	if (res && h_cfg.verification)
+		gfx_printf(&gfx_con, "\n%kFinished and verified!%k\nPress any key...\n",0xFF96FF00, 0xFFCCCCCC);
+	else if (res)
+		gfx_printf(&gfx_con, "\nFinished! Press any key...\n");
+
+out:;
+	sd_unmount();
+	btn_wait();
+}
+
+void restore_emmc_boot() { restore_emmc_selected(PART_BOOT); }
+void restore_emmc_rawnand() { restore_emmc_selected(PART_RAW); }
+void restore_emmc_gpp_parts() { restore_emmc_selected(PART_GP_ALL); }
+
+//TODO: dump_package2
 
 void dump_package1()
 {
@@ -1332,7 +1584,7 @@ out:;
 
 void launch_firmware()
 {
-	u8 max_entries = 16;
+	u8 max_entries = 61;
 
 	ini_sec_t *cfg_sec = NULL;
 	LIST_INIT(ini_sections);
@@ -1345,23 +1597,28 @@ void launch_firmware()
 		if (ini_parse(&ini_sections, "hekate_ipl.ini"))
 		{
 			// Build configuration menu.
-			ment_t *ments = (ment_t *)malloc(sizeof(ment_t) * max_entries);
+			ment_t *ments = (ment_t *)malloc(sizeof(ment_t) * (max_entries + 3));
 			ments[0].type = MENT_BACK;
 			ments[0].caption = "Back";
-			u32 i = 1;
+			ments[1].type = MENT_CHGLINE;
+
+			u32 i = 2;
 			LIST_FOREACH_ENTRY(ini_sec_t, ini_sec, &ini_sections, link)
 			{
-				if (!strcmp(ini_sec->name, "config"))
+				if (!strcmp(ini_sec->name, "config") ||
+					ini_sec->type == INI_COMMENT || ini_sec->type == INI_NEWLINE)
 					continue;
-				ments[i].type = MENT_CHOICE;
+				ments[i].type = ini_sec->type;
 				ments[i].caption = ini_sec->name;
 				ments[i].data = ini_sec;
+				if (ini_sec->type == MENT_CAPTION)
+					ments[i].color = ini_sec->color;
 				i++;
 
 				if (i > max_entries)
 					break;
 			}
-			if (i > 1)
+			if (i > 2)
 			{
 				memset(&ments[i], 0, sizeof(ment_t));
 				menu_t menu = {
@@ -1395,15 +1652,201 @@ void launch_firmware()
 	if (!hos_launch(cfg_sec))
 	{
 #ifdef MENU_LOGO_ENABLE
-		Kc_MENU_LOGO = (u8 *)malloc(36864);
+		Kc_MENU_LOGO = (u8 *)malloc(0x6000);
 		LZ_Uncompress(Kc_MENU_LOGOlz, Kc_MENU_LOGO, SZ_MENU_LOGOLZ);
 #endif //MENU_LOGO_ENABLE
 		EPRINTF("Failed to launch firmware.");
 	}
 
 	ini_free_section(cfg_sec);
+	sd_unmount();
 
 	btn_wait();
+}
+
+void auto_launch_firmware()
+{
+	u8 *BOOTLOGO = NULL;
+	struct _bmp_data
+	{
+		u32 size;
+		u32 size_x;
+		u32 size_y;
+		u32 offset;
+		u32 pos_x;
+		u32 pos_y;
+	};
+
+	struct _bmp_data bmpData;
+	int ini_freed = 1;
+	int backlightEnabled = 0;
+	int bootlogoFound = 0;
+	char *bootlogoCustomEntry = NULL;
+
+	ini_sec_t *cfg_sec = NULL;
+	LIST_INIT(ini_sections);
+
+	gfx_con.mute = 1;
+
+	if (sd_mount())
+	{
+		if (ini_parse(&ini_sections, "hekate_ipl.ini"))
+		{
+			ini_freed = 0;
+			u32 configEntry = 0;
+			u32 boot_entry_id = 0;
+
+			// Load configuration.
+			LIST_FOREACH_ENTRY(ini_sec_t, ini_sec, &ini_sections, link)
+			{
+				// Skip other ini entries for autoboot.
+				if (ini_sec->type == INI_CHOICE)
+				{
+					if (!strcmp(ini_sec->name, "config"))
+					{
+						configEntry = 1;
+						LIST_FOREACH_ENTRY(ini_kv_t, kv, &ini_sec->kvs, link)
+						{
+							if (!strcmp("autoboot", kv->key))
+								h_cfg.autoboot = atoi(kv->val);
+							else if (!strcmp("bootwait", kv->key))
+								h_cfg.bootwait = atoi(kv->val);
+							else if (!strcmp("customlogo", kv->key))
+								h_cfg.customlogo = atoi(kv->val);
+							else if (!strcmp("verification", kv->key))
+								h_cfg.verification = atoi(kv->val);
+						}
+						boot_entry_id++;
+						continue;
+					}
+
+					if (h_cfg.autoboot == boot_entry_id && configEntry)
+					{
+						cfg_sec = ini_clone_section(ini_sec);
+						LIST_FOREACH_ENTRY(ini_kv_t, kv, &cfg_sec->kvs, link)
+						{
+							if (!strcmp("logopath", kv->key))
+								bootlogoCustomEntry = kv->val;
+						}	
+						break;	
+					}
+					boot_entry_id++;
+				}
+			}
+
+			// Add missing configuration entry.
+			if (!configEntry)
+				create_config_entry();
+
+			if (!h_cfg.autoboot)
+				goto out; // Auto boot is disabled.
+
+			if (!cfg_sec)
+				goto out; // No configurations.
+		}
+		else
+			goto out; // Can't load hekate_ipl.ini.
+	}
+	else
+		goto out;
+
+	if (h_cfg.customlogo)
+	{
+		u8 *bitmap = NULL;
+		if (bootlogoCustomEntry != NULL) // Check if user set custom logo path at the boot entry.
+		{
+			bitmap = (u8 *)sd_file_read(bootlogoCustomEntry);
+			if (bitmap == NULL) // Custom entry bootlogo not found, trying default custom one.
+				bitmap = (u8 *)sd_file_read("bootlogo.bmp");
+		}
+		else // User has not set a custom logo path.
+			bitmap = (u8 *)sd_file_read("bootlogo.bmp");
+
+		if (bitmap != NULL)
+		{
+			// Get values manually to avoid unaligned access.
+			bmpData.size = bitmap[2] | bitmap[3] << 8 |
+				bitmap[4] << 16 | bitmap[5] << 24;
+			bmpData.offset = bitmap[10] | bitmap[11] << 8 |
+				bitmap[12] << 16 | bitmap[13] << 24;
+			bmpData.size_x = bitmap[18] | bitmap[19] << 8 |
+				bitmap[20] << 16 | bitmap[21] << 24;
+			bmpData.size_y = bitmap[22] | bitmap[23] << 8 |
+				bitmap[24] << 16 | bitmap[25] << 24;
+			// Sanity check.
+			if (bitmap[0] == 'B' &&
+				bitmap[1] == 'M' &&
+				bitmap[28] == 32 && //
+				bmpData.size_x <= 720 &&
+				bmpData.size_y <= 1280)
+			{
+				if ((bmpData.size - bmpData.offset) <= 0x400000)
+				{
+					// Avoid unaligned access from BM 2-byte MAGIC and remove header.
+					BOOTLOGO = (u8 *)malloc(0x400000);
+					memcpy(BOOTLOGO, bitmap + bmpData.offset, bmpData.size - bmpData.offset);
+					free(bitmap);
+					// Center logo if res < 720x1280.
+					bmpData.pos_x = (720  - bmpData.size_x) >> 1;
+					bmpData.pos_y = (1280 - bmpData.size_y) >> 1;
+
+					bootlogoFound = 1;
+				}
+			}
+			else
+				free(bitmap);
+		}
+	}
+
+	// Render boot logo.
+	if (bootlogoFound)
+	{
+		gfx_render_bmp_argb(&gfx_ctxt, (u32 *)BOOTLOGO, bmpData.size_x, bmpData.size_y,
+			bmpData.pos_x, bmpData.pos_y);
+	}
+	else
+	{
+		BOOTLOGO = (void *)malloc(0x4000);
+		LZ_Uncompress(BOOTLOGO_LZ, BOOTLOGO, SZ_BOOTLOGO_LZ);
+		gfx_set_rect_grey(&gfx_ctxt, BOOTLOGO, X_BOOTLOGO, Y_BOOTLOGO, 326, 544);
+		free(BOOTLOGO);
+	}
+	free(BOOTLOGO);
+
+	display_backlight(1);
+	backlightEnabled = 1;
+
+	// Wait before booting. If VOL- is pressed go into bootloader menu.
+	u32 btn = btn_wait_timeout(h_cfg.bootwait * 1000, BTN_VOL_DOWN);
+
+	if (btn & BTN_VOL_DOWN)
+		goto out;
+
+	ini_free(&ini_sections);
+	ini_freed = 1;
+
+#ifdef MENU_LOGO_ENABLE
+	free(Kc_MENU_LOGO);
+#endif //MENU_LOGO_ENABLE
+	if (!hos_launch(cfg_sec))
+	{
+		// Failed to launch firmware.
+#ifdef MENU_LOGO_ENABLE
+		Kc_MENU_LOGO = (u8 *)malloc(ALIGN(SZ_MENU_LOGO, 0x10));
+		LZ_Uncompress(Kc_MENU_LOGOlz, Kc_MENU_LOGO, SZ_MENU_LOGOLZ);
+#endif //MENU_LOGO_ENABLE
+	}
+
+out:;
+	if (!ini_freed)
+		ini_free(&ini_sections);
+	ini_free_section(cfg_sec);
+
+	sd_unmount();
+	gfx_con.mute = 0;
+
+	if (!backlightEnabled)
+		display_backlight(1);
 }
 
 void toggle_autorcm(){
@@ -1524,7 +1967,7 @@ void print_fuel_gauge_info()
 	gfx_printf(&gfx_con, "Age:                    %3d%\n", value);
 
 	max17050_get_property(MAX17050_Cycles, &value);
-	gfx_printf(&gfx_con, "Charge cycle count:     %4d\n", value);
+	gfx_printf(&gfx_con, "Charge cycle count:     %3d%\n", value);
 
 	max17050_get_property(MAX17050_TEMP, &value);
 	if (value >= 0)
@@ -1687,7 +2130,7 @@ void print_battery_info()
 	free(buf);
 }
 
-void fix_fuel_gauge_configuration()
+/* void fix_fuel_gauge_configuration()
 {
 	gfx_clear_grey(&gfx_ctxt, 0x1B);
 	gfx_con_setpos(&gfx_con, 0, 0);
@@ -1697,7 +2140,7 @@ void fix_fuel_gauge_configuration()
 	max17050_get_property(MAX17050_VCELL, &battVoltage);
 	max17050_get_property(MAX17050_AvgCurrent, &avgCurrent);
 
-	//Check if still charging. If not, check if battery is >= 95% (4.1V).
+	// Check if still charging. If not, check if battery is >= 95% (4.1V).
 	if (avgCurrent < 0 && battVoltage > 4100)
 	{
 		if ((avgCurrent / 1000) < -10)
@@ -1736,17 +2179,18 @@ void fix_fuel_gauge_configuration()
 
 	sleep(500000);
 	btn_wait();
-}
+} */
 
-void fix_battery_desync()
+/*void reset_pmic_fuel_gauge_charger_config()
 {
 	int avgCurrent;
 
 	gfx_clear_grey(&gfx_ctxt, 0x1B);
 	gfx_con_setpos(&gfx_con, 0, 0);
 
-	gfx_printf(&gfx_con, "%kAre you really sure?\nThis will wipe your battery stats completely!\n", 0xFFFFDD00);
-	gfx_printf(&gfx_con, "\nAdditionally you may need to reconfigure,\nyour time and date settings.\n%k", 0xFFCCCCCC);
+	gfx_printf(&gfx_con, "%k\nThis will wipe your battery stats completely!\n"
+		"%kAnd it may not power on without physically\nremoving and re-inserting the battery.\n%k"
+		"\nAre you really sure?%k\n", 0xFFFFDD00, 0xFFFF0000, 0xFFFFDD00, 0xFFCCCCCC);
 
 	gfx_puts(&gfx_con, "\nPress POWER to Continue.\nPress VOL to go to the menu.\n\n\n");
 	u32 btn = btn_wait();
@@ -1754,23 +2198,47 @@ void fix_battery_desync()
 	{
 		gfx_clear_grey(&gfx_ctxt, 0x1B);
 		gfx_con_setpos(&gfx_con, 0, 0);
-		gfx_printf(&gfx_con, "%kDisconnect the USB cable and wait 30 seconds.\naAfter that press any key!%k\n\n", 0xFFFFDD00, 0xFFCCCCCC);
-		gfx_printf(&gfx_con, "%k* After this process is done,\n  connect the USB cable to power-on.\n\n%k", 0xFF00DDFF, 0xFFCCCCCC);
-		sleep(500000);
-		btn_wait();
+		gfx_printf(&gfx_con, "%kKeep the USB cable connected!%k\n\n", 0xFFFFDD00, 0xFFCCCCCC);
+		gfx_con_getpos(&gfx_con, &gfx_con.savedx,  &gfx_con.savedy);
+
+		u8 value = 30;
+		while (value > 0)
+		{
+			gfx_con_setpos(&gfx_con, gfx_con.savedx, gfx_con.savedy);
+			gfx_printf(&gfx_con, "%kWait... (%ds)   %k", 0xFF888888, value, 0xFFCCCCCC);
+			sleep(1000000);
+			value--;
+		}
+		gfx_con_setpos(&gfx_con, gfx_con.savedx, gfx_con.savedy);
 
 		//Check if still connected.
 		max17050_get_property(MAX17050_AvgCurrent, &avgCurrent);
-		if (avgCurrent < -100000)
-		{
-			bq24193_fake_battery_removal();
-			gfx_printf(&gfx_con, "If the device did not powered off,\ndo it from hekate menu");
-		}
+		if ((avgCurrent / 1000) < -10)
+			EPRINTF("You need to be connected to a wall adapter\nor PC to apply this fix!");
 		else
-			EPRINTF("You need to be disconnected from USB,\nto apply this fix!");
+		{
+			// Apply fix.
+			bq24193_fake_battery_removal();
+			gfx_printf(&gfx_con, "Done!               \n"
+				"%k1. Remove the USB cable\n"
+				"2. Press POWER for 15s.\n"
+				"3. Reconnect the USB to power-on!%k\n", 0xFFFFDD00, 0xFFCCCCCC);
+		}
 		sleep(500000);
 		btn_wait();
 	}
+}*/
+
+void fix_battery_desync()
+{
+	gfx_clear_grey(&gfx_ctxt, 0x1B);
+	gfx_con_setpos(&gfx_con, 0, 0);
+
+	max77620_low_battery_monitor_config();
+
+	gfx_puts(&gfx_con, "\nDone!\n");
+
+	btn_wait();
 }
 
 void about()
@@ -1790,7 +2258,7 @@ void about()
 	"   Copyright (C) 2018, ChaN\n\n"
 	" - bcl-1.2.0,\n"
 	"   Copyright (C) 2003-2006, Marcus Geelnard\n\n"
-	" - Atmosphere (se_calculate_sha256),\n"
+	" - Atmosphere (SE sha256, prc id patches),\n"
 	"   Copyright (C) 2018, Atmosphere-NX\n"
 	" ___________________________________________\n\n";
 	static const char octopus[] =
@@ -1823,14 +2291,14 @@ void about()
 	btn_wait();
 }
 
-/*ment_t ment_options[] = {
+ment_t ment_options[] = {
 	MDEF_BACK(),
 	MDEF_CHGLINE(),
 	MDEF_HANDLER("Auto boot", config_autoboot),
 	MDEF_HANDLER("Boot time delay", config_bootdelay),
 	MDEF_HANDLER("Custom boot logo", config_customlogo),
 	MDEF_END()
-};*/
+};
 
 menu_t menu_options = {
 	ment_options,
@@ -1880,7 +2348,7 @@ menu_t menu_autorcm = {
 	"Toggle AutoRCM ON/OFF", 0, 0
 };
 
-/*ment_t ment_restore[] = {
+ment_t ment_restore[] = {
 	MDEF_BACK(),
 	MDEF_CHGLINE(),
 	MDEF_CAPTION("------ Full --------", 0xFF0AB9E6),
@@ -1895,7 +2363,7 @@ menu_t menu_autorcm = {
 menu_t menu_restore = {
 	ment_restore,
 	"Restore options", 0, 0
-};*/
+};
 
 ment_t ment_backup[] = {
 	MDEF_BACK(),
@@ -1920,14 +2388,15 @@ ment_t ment_tools[] = {
 	MDEF_CHGLINE(),
 	MDEF_CAPTION("-- Backup & Restore --", 0xFF0AB9E6),
 	MDEF_MENU("Backup", &menu_backup),
-	//MDEF_MENU("Restore", &menu_restore),
-	//MDEF_HANDLER("Verification options", config_verification),
+	MDEF_MENU("Restore", &menu_restore),
+	MDEF_HANDLER("Verification options", config_verification),
 	MDEF_CHGLINE(),
 	MDEF_CAPTION("-------- Misc --------", 0xFF0AB9E6),
 	MDEF_HANDLER("Dump package1", dump_package1),
 	MDEF_HANDLER("Fix SD files attributes", fix_sd_attr),
 	MDEF_HANDLER("Fix battery de-sync", fix_battery_desync),
 	//MDEF_HANDLER("Fix fuel gauge configuration", fix_fuel_gauge_configuration),
+	//MDEF_HANDLER("Reset all battery cfg", reset_pmic_fuel_gauge_charger_config),
 	MDEF_CHGLINE(),
 	MDEF_CAPTION("------ Dangerous -----", 0xFFFF0000),
 	MDEF_MENU("AutoRCM", &menu_autorcm),
@@ -1941,7 +2410,7 @@ menu_t menu_tools = {
 
 ment_t ment_top[] = {
 	MDEF_HANDLER("Launch firmware", launch_firmware),
-	//MDEF_MENU("Launch options", &menu_options),
+	MDEF_MENU("Launch options", &menu_options),
 	MDEF_CAPTION("---------------", 0xFF444444),
 	MDEF_MENU("Tools", &menu_tools),
 	MDEF_MENU("Console info", &menu_cinfo),
@@ -1955,7 +2424,7 @@ ment_t ment_top[] = {
 };
 menu_t menu_top = {
 	ment_top,
-	"hekate - CTCaer mod v_._", 0, 0
+	"hekate - CTCaer mod v3.0", 0, 0
 };
 
 extern void pivot_stack(u32 stack_top);
@@ -1980,14 +2449,17 @@ void ipl_main()
 	gfx_clear_grey(&gfx_ctxt, 0x1B);
 
 #ifdef MENU_LOGO_ENABLE
-	Kc_MENU_LOGO = (u8 *)malloc(36864);
+	Kc_MENU_LOGO = (u8 *)malloc(0x6000);
 	LZ_Uncompress(Kc_MENU_LOGOlz, Kc_MENU_LOGO, SZ_MENU_LOGOLZ);
 #endif //MENU_LOGO_ENABLE
 
 	gfx_con_init(&gfx_con, &gfx_ctxt);
 
 	// Enable backlight after initializing gfx
-	display_backlight(1);
+	//display_backlight(1);
+	set_default_configuration();
+	// Load saved configuration and auto boot if enabled.
+	auto_launch_firmware();
 
 	while (1)
 		tui_do_menu(&gfx_con, &menu_top);

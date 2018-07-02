@@ -1,6 +1,5 @@
 /*
-* Copyright (c) 2018 naehrwert
-* Copyright (C) 2018 CTCaer
+* Copyright (c) 2018 CTCaer
 *
 * This program is free software; you can redistribute it and/or modify it
 * under the terms and conditions of the GNU General Public License,
@@ -15,37 +14,24 @@
 * along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef _INI_H_
-#define _INI_H_
+#ifndef _CONFIG_H_
+#define _CONFIG_H_
 
 #include "types.h"
-#include "list.h"
 
-#define INI_CHOICE  3
-#define INI_CAPTION 5
-#define INI_CHGLINE 6
-#define INI_NEWLINE 0xFE
-#define INI_COMMENT 0xFF
-
-typedef struct _ini_kv_t
+typedef struct _hekate_config
 {
-	char *key;
-	char *val;
-	link_t link;
-} ini_kv_t;
+	u32 autoboot;
+	u32 bootwait;
+	u32 customlogo;
+	u32 verification;
+}hekate_config;
 
-typedef struct _ini_sec_t
-{
-	char *name;
-	link_t kvs;
-	link_t link;
-	u32 type;
-	u32 color;
-} ini_sec_t;
+void set_default_configuration();
+int create_config_entry();
+void config_autoboot();
+void config_bootdelay();
+void config_customlogo();
+void config_verification();
 
-int ini_parse(link_t *dst, char *ini_path);
-void ini_free(link_t *dst);
-ini_sec_t *ini_clone_section(ini_sec_t *cfg);
-void ini_free_section(ini_sec_t *cfg);
-
-#endif
+#endif /* _CONFIG_H_ */
