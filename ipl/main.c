@@ -233,7 +233,7 @@ void mbist_workaround()
 	CLOCK(CLK_RST_CONTROLLER_RST_DEV_Y_CLR) = 0x40;
 	CLOCK(CLK_RST_CONTROLLER_RST_DEV_X_CLR) = 0x40000;
 	CLOCK(CLK_RST_CONTROLLER_RST_DEV_L_CLR) = 0x18000000;
-	sleep(2);
+	usleep(2);
 
 	I2S(0x0A0) |= 0x400;
 	I2S(0x088) &= 0xFFFFFFFE;
@@ -247,7 +247,7 @@ void mbist_workaround()
 	I2S(0x488) &= 0xFFFFFFFE;
 	DISPLAY_A(0xCF8) |= 4;
 	VIC(0x8C) = 0xFFFFFFFF;
-	sleep(2);
+	usleep(2);
 
 	CLOCK(CLK_RST_CONTROLLER_RST_DEV_Y_SET) = 0x40;
 	CLOCK(CLK_RST_CONTROLLER_RST_DEV_L_SET) = 0x18000000;
@@ -357,10 +357,32 @@ void print_fuseinfo()
 	gfx_clear_grey(&gfx_ctxt, 0x1B);
 	gfx_con_setpos(&gfx_con, 0, 0);
 
+	u32 burntFuses = 0;
+	for (u32 i = 0; i < 32; i++)
+	{
+		if ((fuse_read_odm(7) >> i) & 1)
+			burntFuses++;
+	}
+
+	gfx_printf(&gfx_con, "\nSKU:         %X - ", FUSE(0x110));
+	switch (fuse_read_odm(4) & 3)
+	{
+	case 0:
+		gfx_printf(&gfx_con, "Retail\n");
+		break;
+	case 3:
+		gfx_printf(&gfx_con, "Dev\n");
+		break;
+	}
+	gfx_printf(&gfx_con, "Sdram ID:    %d\n", (fuse_read_odm(4) >> 3) & 0x1F);
+	gfx_printf(&gfx_con, "Burnt fuses: %d\n", burntFuses);
+	gfx_printf(&gfx_con, "Secure key:  %08X%08X%08X%08X\n\n\n",
+		byte_swap_32(FUSE(0x1A4)), byte_swap_32(FUSE(0x1A8)), byte_swap_32(FUSE(0x1AC)), byte_swap_32(FUSE(0x1B0)));
+
 	gfx_printf(&gfx_con, "%k(Unlocked) fuse cache:\n\n%k", 0xFF00DDFF, 0xFFCCCCCC);
 	gfx_hexdump(&gfx_con, 0x7000F900, (u8 *)0x7000F900, 0x2FC);
 
-	gfx_puts(&gfx_con, "\nPress POWER to dump them to SD Card.\nPress VOL to go to the menu.\n");
+	gfx_puts(&gfx_con, "Press POWER to dump them to SD Card.\nPress VOL to go to the menu.\n");
 
 	u32 btn = btn_wait();
 	if (btn & BTN_POWER)
@@ -691,7 +713,7 @@ void reboot_rcm()
 	PMC(APBDEV_PMC_SCRATCH0) = 2; // Reboot into rcm.
 	PMC(0) |= 0x10;
 	while (1)
-		sleep(1);
+		usleep(1);
 }
 
 void power_off()
@@ -715,7 +737,7 @@ int dump_emmc_verify(sdmmc_storage_t *storage, u32 lba_curr, char* outFilename, 
 
 	if (f_open(&fp, outFilename, FA_READ) == FR_OK)
 	{
-		u32 totalSectorsVer = (u32)(f_size(&fp) >> 9);
+		u32 totalSectorsVer = (u32)((u64)f_size(&fp)>>(u64)9);
 		
 		u32 numSectorsPerIter = 0;
 		if (totalSectorsVer > 0x200000)
@@ -771,7 +793,7 @@ int dump_emmc_verify(sdmmc_storage_t *storage, u32 lba_curr, char* outFilename, 
 			if (res)
 			{
 				gfx_con.fntsz = 16;
-				EPRINTFARGS("\nSD card and eMMC data (@LBA %08X),\ndo not match!\n\nVerification failed..\n", num, lba_curr);
+				EPRINTFARGS("\nSD card and eMMC data (@LBA %08X),\ndo not match!\n\nVerification failed..\n", lba_curr);
 
 				free(bufEm);
 				free(bufSd);
@@ -812,7 +834,6 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 
 	u32 multipartSplitSize = (1u << 31);
 	u32 totalSectors = part->lba_end - part->lba_start + 1;
-	u32 lbaStartPart = part->lba_start;
 	u32 currPartIdx = 0;
 	u32 numSplitParts = 0;
 	u32 maxSplitParts = 0;
@@ -930,6 +951,7 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 	u8 *buf = (u8 *)calloc(numSectorsPerIter, NX_EMMC_BLOCKSIZE);
 
 	u32 lba_curr = part->lba_start;
+	u32 lbaStartPart = part->lba_start;
 	u32 bytesWritten = 0;
 	u32 prevPct = 200;
 	int retryCount = 0;
@@ -939,6 +961,7 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 	{
 		lba_curr += currPartIdx * (multipartSplitSize / NX_EMMC_BLOCKSIZE);
 		totalSectors -= currPartIdx * (multipartSplitSize / NX_EMMC_BLOCKSIZE);
+		lbaStartPart = lba_curr; // Update the start LBA for verification.
 	}
 
 	u32 num = 0;
@@ -1027,7 +1050,7 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 			EPRINTFARGS("Error reading %d blocks @ LBA %08X,\nfrom eMMC (try %d), retrying...",
 				num, lba_curr, ++retryCount);
 
-			sleep(150000);
+			msleep(150);
 			if (retryCount >= 3)
 			{
 				gfx_con.fntsz = 16;
@@ -1257,7 +1280,7 @@ int restore_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part
 		return 0;
 	}
 	//TODO: Should we keep this check?
-	else if ((f_size(&fp) >> 9) != totalSectors)
+	else if (((u32)((u64)f_size(&fp)>>(u64)9)) != totalSectors)
 	{
 		gfx_con.fntsz = 16;
 		EPRINTF("Size of sd card backup does not match,\neMMC's selected part size.\n");
@@ -1266,7 +1289,7 @@ int restore_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part
 		return 0;
 	}
 	else
-		gfx_printf(&gfx_con, "\nTotal restore size: %d MiB.\n\n", (f_size(&fp) >> 9) >> SECTORS_TO_MIB_COEFF);
+		gfx_printf(&gfx_con, "\nTotal restore size: %d MiB.\n\n", ((u32)((u64)f_size(&fp)>>(u64)9)) >> SECTORS_TO_MIB_COEFF);
 
 	u32 numSectorsPerIter = 0;
 	if (totalSectors > 0x200000)
@@ -1304,7 +1327,7 @@ int restore_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part
 			EPRINTFARGS("Error writing %d blocks @ LBA %08X\nto eMMC (try %d), retrying...",
 				num, lba_curr, ++retryCount);
 
-			sleep(150000);
+			msleep(150);
 			if (retryCount >= 3)
 			{
 				gfx_con.fntsz = 16;
@@ -1375,7 +1398,7 @@ static void restore_emmc_selected(emmcPartType_t restoreType)
 	{
 		gfx_con_setpos(&gfx_con, gfx_con.savedx, gfx_con.savedy);
 		gfx_printf(&gfx_con, "%kWait... (%ds)    %k", 0xFF888888, value, 0xFFCCCCCC);
-		sleep(1000000);
+		msleep(1000);
 		value--;
 	}
 	gfx_con_setpos(&gfx_con, gfx_con.savedx, gfx_con.savedy);
@@ -1644,7 +1667,7 @@ void launch_firmware()
 	if (!cfg_sec)
 	{
 		gfx_printf(&gfx_con, "\nUsing default launch configuration...\n");
-		sleep(3000000);
+		msleep(3000);
 	}
 #ifdef MENU_LOGO_ENABLE
 	free(Kc_MENU_LOGO);
@@ -1891,6 +1914,9 @@ int fix_attributes(char *path, u32 *total)
 	u32 k = 0;
 	static FILINFO fno;
 
+	// Remove archive bit for selected "root" path.
+	f_chmod(path, 0, AM_ARC);
+
 	// Open directory.
 	res = f_opendir(&dir, path);
 	if (res == FR_OK)
@@ -2050,11 +2076,8 @@ void print_battery_charger_info()
 	bq24193_get_property(BQ24193_ChargeVoltageLimit, &value);
 	gfx_printf(&gfx_con, "Charge voltage limit:      %4d mV\n", value);
 
-	bq24193_get_property(BQ24193_ThermalRegulation, &value);
-	gfx_printf(&gfx_con, "Thermal threshold:         %4d oC\n", value);
-
 	bq24193_get_property(BQ24193_ChargeStatus, &value);
-	gfx_printf(&gfx_con, "Charge status:              ");
+	gfx_printf(&gfx_con, "Charge status:             ");
 	switch (value)
 	{
 	case 0:
@@ -2074,7 +2097,7 @@ void print_battery_charger_info()
 		break;
 	}
 	bq24193_get_property(BQ24193_TempStatus, &value);
-	gfx_printf(&gfx_con, "Temperature status:         ");
+	gfx_printf(&gfx_con, "Temperature status:        ");
 	switch (value)
 	{
 	case 0:
@@ -2114,7 +2137,7 @@ void print_battery_info()
 	for (int i = 0; i < 0x200; i += 2)
 	{
 		i2c_recv_buf_small(buf + i, 2, I2C_1, 0x36, i >> 1);
-		sleep(2500);
+		usleep(2500);
 	}
 
 	gfx_hexdump(&gfx_con, 0, (u8 *)buf, 0x200);
@@ -2170,7 +2193,7 @@ void print_battery_info()
 			if (btn & BTN_POWER)
 			{
 				max17050_fix_configuration();
-				sleep(1000000);
+				msleep(1000);
 				gfx_con_getpos(&gfx_con, &gfx_con.savedx,  &gfx_con.savedy);
 				u16 value = 0;
 				gfx_printf(&gfx_con, "%kThe console will power off in 45 seconds.\n%k", 0xFFFFDD00, 0xFFCCCCCC);
@@ -2178,10 +2201,10 @@ void print_battery_info()
 				{
 					gfx_con_setpos(&gfx_con, gfx_con.savedx, gfx_con.savedy);
 					gfx_printf(&gfx_con, "%2ds elapsed", value);
-					sleep(1000000);
+					msleep(1000);
 					value++;
 				}
-				sleep(2000000);
+				msleep(2000);
 
 				power_off();
 			}
@@ -2191,7 +2214,7 @@ void print_battery_info()
 	else
 		EPRINTF("You need a fully charged battery\nand connected to a wall adapter,\nto apply this fix!");
 
-	sleep(500000);
+	msleep(500);
 	btn_wait();
 } */
 
@@ -2220,7 +2243,7 @@ void print_battery_info()
 		{
 			gfx_con_setpos(&gfx_con, gfx_con.savedx, gfx_con.savedy);
 			gfx_printf(&gfx_con, "%kWait... (%ds)   %k", 0xFF888888, value, 0xFFCCCCCC);
-			sleep(1000000);
+			msleep(1000);
 			value--;
 		}
 		gfx_con_setpos(&gfx_con, gfx_con.savedx, gfx_con.savedy);
@@ -2238,7 +2261,7 @@ void print_battery_info()
 				"2. Press POWER for 15s.\n"
 				"3. Reconnect the USB to power-on!%k\n", 0xFFFFDD00, 0xFFCCCCCC);
 		}
-		sleep(500000);
+		msleep(500);
 		btn_wait();
 	}
 }*/
@@ -2409,7 +2432,7 @@ ment_t ment_tools[] = {
 	MDEF_HANDLER("Dump package1", dump_package1),
 	MDEF_HANDLER("Fix battery de-sync", fix_battery_desync),
 	MDEF_HANDLER("Remove archive bit (switch folder)", fix_sd_switch_attr),
-	MDEF_HANDLER("Remove archive bit (all sd files)", fix_sd_all_attr),
+	//MDEF_HANDLER("Remove archive bit (all sd files)", fix_sd_all_attr),
 	//MDEF_HANDLER("Fix fuel gauge configuration", fix_fuel_gauge_configuration),
 	//MDEF_HANDLER("Reset all battery cfg", reset_pmic_fuel_gauge_charger_config),
 	MDEF_CHGLINE(),
@@ -2439,7 +2462,7 @@ ment_t ment_top[] = {
 };
 menu_t menu_top = {
 	ment_top,
-	"hekate - CTCaer mod v3.0", 0, 0
+	"hekate - CTCaer mod v3.1", 0, 0
 };
 
 extern void pivot_stack(u32 stack_top);
