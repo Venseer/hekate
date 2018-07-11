@@ -35,6 +35,7 @@
 #include "pkg2.h"
 #include "ff.h"
 #include "di.h"
+#include "config.h"
 
 #include "gfx.h"
 extern gfx_ctxt_t gfx_ctxt;
@@ -42,6 +43,8 @@ extern gfx_con_t gfx_con;
 extern void sd_unmount();
 //#define DPRINTF(...) gfx_printf(&gfx_con, __VA_ARGS__)
 #define DPRINTF(...)
+
+extern hekate_config h_cfg;
 
 typedef struct _launch_ctxt_t
 {
@@ -81,7 +84,7 @@ typedef struct _merge_kip_t
 #define KB_FIRMWARE_VERSION_500 4
 #define KB_FIRMWARE_VERSION_MAX KB_FIRMWARE_VERSION_500
 
-// Exosphère magic "XBC0"
+// Exosphère magic "XBC0".
 #define MAGIC_EXOSPHERE 0x30434258
 
 static const u8 keyblob_keyseeds[][0x10] = {
@@ -119,12 +122,12 @@ static void _se_lock()
 	for (u32 i = 0; i < 2; i++)
 		se_rsa_acc_ctrl(i, 1);
 
-	SE(0x4) = 0; //Make this reg secure only.
-	SE(SE_KEY_TABLE_ACCESS_LOCK_OFFSET) = 0; //Make all key access regs secure only.
-	SE(SE_RSA_KEYTABLE_ACCESS_LOCK_OFFSET) = 0; //Make all rsa access regs secure only.
-	SE(SE_SECURITY_0) &= 0xFFFFFFFB; //Make access lock regs secure only.
+	SE(0x4) = 0; // Make this reg secure only.
+	SE(SE_KEY_TABLE_ACCESS_LOCK_OFFSET) = 0; // Make all key access regs secure only.
+	SE(SE_RSA_KEYTABLE_ACCESS_LOCK_OFFSET) = 0; // Make all RSA access regs secure only.
+	SE(SE_SECURITY_0) &= 0xFFFFFFFB; // Make access lock regs secure only.
 
-	//This is useful for documenting the bits in the SE config registers, so we can keep it around.
+	// This is useful for documenting the bits in the SE config registers, so we can keep it around.
 	/*gfx_printf(&gfx_con, "SE(SE_SECURITY_0) = %08X\n", SE(SE_SECURITY_0));
 	gfx_printf(&gfx_con, "SE(0x4) = %08X\n", SE(0x4));
 	gfx_printf(&gfx_con, "SE(SE_KEY_TABLE_ACCESS_LOCK_OFFSET) = %08X\n", SE(SE_KEY_TABLE_ACCESS_LOCK_OFFSET));
@@ -148,19 +151,19 @@ int keygen(u8 *keyblob, u32 kb, void *tsec_fw)
 	se_key_acc_ctrl(13, 0x15);
 	se_key_acc_ctrl(14, 0x15);
 
-	//Get TSEC key.
+	// Get TSEC key.
 	if (tsec_query(tmp, 1, tsec_fw) < 0)
 		return 0;
 
 	se_aes_key_set(13, tmp, 0x10);
 
-	//Derive keyblob keys from TSEC+SBK.
+	// Derive keyblob keys from TSEC+SBK.
 	se_aes_crypt_block_ecb(13, 0, tmp, keyblob_keyseeds[0]);
 	se_aes_unwrap_key(15, 14, tmp);
 	se_aes_crypt_block_ecb(13, 0, tmp, keyblob_keyseeds[kb]);
 	se_aes_unwrap_key(13, 14, tmp);
 
-	//Clear SBK.
+	// Clear SBK.
 	se_aes_key_clear(14);
 
 	//TODO: verify keyblob CMAC.
@@ -172,7 +175,7 @@ int keygen(u8 *keyblob, u32 kb, void *tsec_fw)
 	se_aes_crypt_block_ecb(13, 0, tmp, cmac_keyseed);
 	se_aes_unwrap_key(11, 13, cmac_keyseed);
 
-	//Decrypt keyblob and set keyslots.
+	// Decrypt keyblob and set keyslots.
 	se_aes_crypt_ctr(13, keyblob + 0x20, 0x90, keyblob + 0x20, 0x90, keyblob + 0x10);
 	se_aes_key_set(11, keyblob + 0x20 + 0x80, 0x10); //Package1 key.
 	se_aes_key_set(12, keyblob + 0x20, 0x10);
@@ -202,21 +205,21 @@ int keygen(u8 *keyblob, u32 kb, void *tsec_fw)
 			break;
 	}
 
-	//Package2 key.
+	// Package2 key.
 	se_key_acc_ctrl(8, 0x15);
 	se_aes_unwrap_key(8, 12, key8_keyseed);
 
 	return 1;
 }
 
-static void _copy_bootconfig(launch_ctxt_t *ctxt)
+static void _copy_bootconfig()
 {
 	sdmmc_storage_t storage;
 	sdmmc_t sdmmc;
 
 	sdmmc_storage_init_mmc(&storage, &sdmmc, SDMMC_4, SDMMC_BUS_WIDTH_8, 4);
 
-	//Read BCT.
+	// Read BCT.
 	u8 *buf = (u8 *)0x4003D000;
 	sdmmc_storage_set_mmc_partition(&storage, 1);
 	sdmmc_storage_read(&storage, 0, 0x3000 / NX_EMMC_BLOCKSIZE, buf);
@@ -234,20 +237,20 @@ static int _read_emmc_pkg1(launch_ctxt_t *ctxt)
 
 	sdmmc_storage_init_mmc(&storage, &sdmmc, SDMMC_4, SDMMC_BUS_WIDTH_8, 4);
 
-	//Read package1.
+	// Read package1.
 	ctxt->pkg1 = (u8 *)malloc(0x40000);
 	sdmmc_storage_set_mmc_partition(&storage, 1);
 	sdmmc_storage_read(&storage, 0x100000 / NX_EMMC_BLOCKSIZE, 0x40000 / NX_EMMC_BLOCKSIZE, ctxt->pkg1);
 	ctxt->pkg1_id = pkg1_identify(ctxt->pkg1);
 	if (!ctxt->pkg1_id)
 	{
-		gfx_printf(&gfx_con, "%kCould not identify package1,\nVersion (= '%s').%k\n", 0xFFFF0000, (char *)ctxt->pkg1 + 0x10, 0xFFCCCCCC);
+		gfx_printf(&gfx_con, "%kUnknown package1,\nVersion (= '%s').%k\n", 0xFFFF0000, (char *)ctxt->pkg1 + 0x10, 0xFFCCCCCC);
 		goto out;
 	}
 	gfx_printf(&gfx_con, "Identified package1 ('%s'),\nKeyblob version %d\n\n", (char *)(ctxt->pkg1 + 0x10), ctxt->pkg1_id->kb);
 
-	//Read the correct keyblob.
-	ctxt->keyblob = (u8 *)malloc(NX_EMMC_BLOCKSIZE);
+	// Read the correct keyblob.
+	ctxt->keyblob = (u8 *)calloc(NX_EMMC_BLOCKSIZE, 1);
 	sdmmc_storage_read(&storage, 0x180000 / NX_EMMC_BLOCKSIZE + ctxt->pkg1_id->kb, 1, ctxt->keyblob);
 
 	res = 1;
@@ -266,16 +269,16 @@ static int _read_emmc_pkg2(launch_ctxt_t *ctxt)
 	sdmmc_storage_init_mmc(&storage, &sdmmc, SDMMC_4, SDMMC_BUS_WIDTH_8, 4);
 	sdmmc_storage_set_mmc_partition(&storage, 0);
 
-	//Parse eMMC GPT.
+	// Parse eMMC GPT.
 	LIST_INIT(gpt);
 	nx_emmc_gpt_parse(&gpt, &storage);
 	DPRINTF("Parsed GPT\n");
-	//Find package2 partition.
+	// Find package2 partition.
 	emmc_part_t *pkg2_part = nx_emmc_part_find(&gpt, "BCPKG2-1-Normal-Main");
 	if (!pkg2_part)
 		goto out;
 
-	//Read in package2 header and get package2 real size.
+	// Read in package2 header and get package2 real size.
 	//TODO: implement memalign for DMA buffers.
 	u8 *tmp = (u8 *)malloc(NX_EMMC_BLOCKSIZE);
 	nx_emmc_part_read(&storage, pkg2_part, 0x4000 / NX_EMMC_BLOCKSIZE, 1, tmp);
@@ -406,6 +409,16 @@ static int _config(launch_ctxt_t *ctxt, ini_sec_t *cfg)
 	return 1;
 }
 
+static void _free_launch_components(launch_ctxt_t *ctxt)
+{
+	free(ctxt->keyblob);
+	free(ctxt->pkg1);
+	free(ctxt->pkg2);
+	free(ctxt->warmboot);
+	free(ctxt->secmon);
+	free(ctxt->kernel);
+}
+
 int hos_launch(ini_sec_t *cfg)
 {
 	int bootStateDramPkg2 = 0;
@@ -434,8 +447,12 @@ int hos_launch(ini_sec_t *cfg)
 	gfx_printf(&gfx_con, "Loaded package1 and keyblob\n");
 
 	// Generate keys.
-	keygen(ctxt.keyblob, ctxt.pkg1_id->kb, (u8 *)ctxt.pkg1 + ctxt.pkg1_id->tsec_off);
-	DPRINTF("Generated keys\n");
+	if (!h_cfg.se_keygen_done)
+	{
+		keygen(ctxt.keyblob, ctxt.pkg1_id->kb, (u8 *)ctxt.pkg1 + ctxt.pkg1_id->tsec_off);
+		h_cfg.se_keygen_done = 1;
+		DPRINTF("Generated keys\n");
+	}
 
 	// Decrypt and unpack package1 if we require parts of it.
 	if (!ctxt.warmboot || !ctxt.secmon)
@@ -544,6 +561,10 @@ int hos_launch(ini_sec_t *cfg)
 		}
 	case KB_FIRMWARE_VERSION_300:
 	case KB_FIRMWARE_VERSION_301:
+		if (ctxt.pkg1_id->kb == KB_FIRMWARE_VERSION_300)
+			PMC(APBDEV_PMC_SECURE_SCRATCH32) = 0xE3;  // Warmboot 3.0.0 security check.
+		else if (ctxt.pkg1_id->kb == KB_FIRMWARE_VERSION_301)
+			PMC(APBDEV_PMC_SECURE_SCRATCH32) = 0x104; // Warmboot 3.0.1/.2 security check.
 		se_key_acc_ctrl(12, 0xFF);
 		se_key_acc_ctrl(13, 0xFF);
 		bootStateDramPkg2 = 2;
@@ -552,11 +573,11 @@ int hos_launch(ini_sec_t *cfg)
 		if (!exoFwNumber)
 			exoFwNumber = 3;
 		break;
-	default:
 	case KB_FIRMWARE_VERSION_400:
 		if (!exoFwNumber)
 			exoFwNumber = 4;
 	case KB_FIRMWARE_VERSION_500:
+	default:
 		se_key_acc_ctrl(12, 0xFF);
 		se_key_acc_ctrl(15, 0xFF);
 		bootStateDramPkg2 = 2;
@@ -565,6 +586,10 @@ int hos_launch(ini_sec_t *cfg)
 			exoFwNumber = 5;
 		break;
 	}
+
+	// Free allocated memory.
+	ini_free_section(cfg);
+	_free_launch_components(&ctxt);
 
 	// Copy BCT if debug mode is enabled.
 	memset((void *)0x4003D000, 0, 0x3000);
@@ -584,17 +609,17 @@ int hos_launch(ini_sec_t *cfg)
 	// Lock SE before starting 'SecureMonitor'.
 	_se_lock();
 
-	//< 4.0.0 Signals. 0: Nothing ready, 1: BCT ready, 2: DRAM and pkg2 ready, 3: Continue boot
-	//>=4.0.0 Signals. 0: Nothing ready, 1: BCT ready, 2: DRAM ready, 4: pkg2 ready and continue boot
+	//  < 4.0.0 Signals - 0: Nothing ready, 1: BCT ready, 2: DRAM and pkg2 ready, 3: Continue boot.
+	// >= 4.0.0 Signals - 0: Nothing ready, 1: BCT ready, 2: DRAM ready, 4: pkg2 ready and continue boot.
 	vu32 *mb_in = (vu32 *)0x40002EF8;
 	//Non-zero: Secmon ready
 	vu32 *mb_out = (vu32 *)0x40002EFC;
 
-	//Start from DRAM ready signal
+	// Start from DRAM ready signal.
 	*mb_in = bootStateDramPkg2;
 	*mb_out = 0;
 
-	//Wait for secmon to get ready.
+	// Wait for secmon to get ready.
 	cluster_boot_cpu0(ctxt.pkg1_id->secmon_base);
 	while (!*mb_out)
 		usleep(1);
@@ -613,10 +638,10 @@ int hos_launch(ini_sec_t *cfg)
 	if (end_di)
 		display_end();
 
-	//Signal to pkg2 ready and continue boot.
+	// Signal pkg2 ready and continue boot.
 	*mb_in = bootStatePkg2Continue;
 
-	//Halt ourselves in waitevent state and resume if there's JTAG activity.
+	// Halt ourselves in waitevent state and resume if there's JTAG activity.
 	while (1)
 		FLOW_CTLR(FLOW_CTLR_HALT_COP_EVENTS) = 0x50000000;
 

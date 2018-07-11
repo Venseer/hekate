@@ -50,6 +50,7 @@
 #include "se_t210.h"
 #include "hos.h"
 #include "pkg1.h"
+#include "pkg2.h"
 #include "mmc.h"
 #include "lz.h"
 #include "max17050.h"
@@ -98,7 +99,7 @@ int sd_mount()
 		}
 		else
 		{
-			EPRINTFARGS("Failed to mount SD card (FatFS Error %d).\n(make sure that a FAT type partition exists)", res);
+			EPRINTFARGS("Failed to mount SD card (FatFS Error %d).\nMake sure that a FAT partition exists..", res);
 		}
 	}
 
@@ -354,7 +355,7 @@ void config_hw()
 
 void print_fuseinfo()
 {
-	gfx_clear_grey(&gfx_ctxt, 0x1B);
+	gfx_clear_partial_grey(&gfx_ctxt, 0x1B, 0, 1256);
 	gfx_con_setpos(&gfx_con, 0, 0);
 
 	u32 burntFuses = 0;
@@ -389,14 +390,9 @@ void print_fuseinfo()
 	{
 		if (sd_mount())
 		{
-			char fuseFilename[23];
 			f_mkdir("Backup");
 			f_mkdir("Backup/Dumps");
-			memcpy(fuseFilename, "Backup/Dumps/fuses.bin\0", 23);
-
-			if (sd_save_to_file((u8 *)0x7000F900, 0x2FC, fuseFilename))
-				EPRINTF("\nError creating fuse.bin file.");
-			else
+			if (!sd_save_to_file((u8 *)0x7000F900, 0x2FC, "Backup/Dumps/fuses.bin"))
 				gfx_puts(&gfx_con, "\nDone!\n");
 			sd_unmount();
 		}
@@ -407,7 +403,7 @@ void print_fuseinfo()
 
 void print_kfuseinfo()
 {
-	gfx_clear_grey(&gfx_ctxt, 0x1B);
+	gfx_clear_partial_grey(&gfx_ctxt, 0x1B, 0, 1256);
 	gfx_con_setpos(&gfx_con, 0, 0);
 
 	gfx_printf(&gfx_con, "%kKFuse contents:\n\n%k", 0xFF00DDFF, 0xFFCCCCCC);
@@ -424,14 +420,9 @@ void print_kfuseinfo()
 	{
 		if (sd_mount())
 		{
-			char kfuseFilename[24];
 			f_mkdir("Backup");
 			f_mkdir("Backup/Dumps");
-			memcpy(kfuseFilename, "Backup/Dumps/kfuses.bin\0", 24);
-
-			if (sd_save_to_file((u8 *)buf, KFUSE_NUM_WORDS * 4, kfuseFilename))
-				EPRINTF("\nError creating kfuse.bin file.");
-			else
+			if (!sd_save_to_file((u8 *)buf, KFUSE_NUM_WORDS * 4, "Backup/Dumps/kfuses.bin"))
 				gfx_puts(&gfx_con, "\nDone!\n");
 			sd_unmount();
 		}
@@ -442,7 +433,7 @@ void print_kfuseinfo()
 
 void print_mmc_info()
 {
-	gfx_clear_grey(&gfx_ctxt, 0x1B);
+	gfx_clear_partial_grey(&gfx_ctxt, 0x1B, 0, 1256);
 	gfx_con_setpos(&gfx_con, 0, 0);
 
 	static const u32 SECTORS_TO_MIB_COEFF  = 11;
@@ -460,7 +451,7 @@ void print_mmc_info()
 		u16 card_type;
 		u32 speed;
 
-		gfx_printf(&gfx_con, "%kCard IDentification:%k\n", 0xFF00DDFF, 0xFFCCCCCC);
+		gfx_printf(&gfx_con, "%kCID:%k\n", 0xFF00DDFF, 0xFFCCCCCC);
 		switch (storage.csd.mmca_vsn)
 		{
 		case 0: /* MMC v1.0 - v1.2 */
@@ -503,7 +494,7 @@ void print_mmc_info()
 			EPRINTF("Unknown CSD structure.");
 		else
 		{
-			gfx_printf(&gfx_con, "%kExtended Card-Specific Data V1.%d:%k\n",
+			gfx_printf(&gfx_con, "%kExtended CSD V1.%d:%k\n",
 				0xFF00DDFF, storage.ext_csd.ext_struct, 0xFFCCCCCC);
 			card_type = storage.ext_csd.card_type;
 			u8 card_type_support[96];
@@ -599,7 +590,7 @@ void print_sdcard_info()
 {
 	static const u32 SECTORS_TO_MIB_COEFF  = 11;
 	
-	gfx_clear_grey(&gfx_ctxt, 0x1B);
+	gfx_clear_partial_grey(&gfx_ctxt, 0x1B, 0, 1256);
 	gfx_con_setpos(&gfx_con, 0, 0);
 
 	if (sd_mount())
@@ -651,7 +642,7 @@ void print_sdcard_info()
 
 void print_tsec_key()
 {
-	gfx_clear_grey(&gfx_ctxt, 0x1B);
+	gfx_clear_partial_grey(&gfx_ctxt, 0x1B, 0, 1256);
 	gfx_con_setpos(&gfx_con, 0, 0);
 
 	sdmmc_storage_t storage;
@@ -663,36 +654,54 @@ void print_tsec_key()
 	u8 *pkg1 = (u8 *)malloc(0x40000);
 	sdmmc_storage_set_mmc_partition(&storage, 1);
 	sdmmc_storage_read(&storage, 0x100000 / NX_EMMC_BLOCKSIZE, 0x40000 / NX_EMMC_BLOCKSIZE, pkg1);
+	sdmmc_storage_end(&storage);
 	const pkg1_id_t *pkg1_id = pkg1_identify(pkg1);
 	if (!pkg1_id)
 	{
-		EPRINTFARGS("Could not identify package1 version\nto read TSEC firmware (= '%s').",
+		EPRINTFARGS("Unknown package1 version for reading\nTSEC firmware (= '%s').",
 			(char *)pkg1 + 0x10);
-		goto out;
+		goto out_wait;
 	}
+	
 
+	u8 keys[0x10 * 3];
 	for(u32 i = 1; i <= 3; i++)
 	{
-		u8 key[0x10];
-		int res = tsec_query(key, i, pkg1 + pkg1_id->tsec_off);
+		int res = tsec_query(keys + ((i - 1) * 0x10), i, pkg1 + pkg1_id->tsec_off);
 
 		gfx_printf(&gfx_con, "%kTSEC key %d: %k", 0xFF00DDFF, i, 0xFFCCCCCC);
 		if (res >= 0)
 		{
-			for (u32 i = 0; i < 0x10; i++)
-				gfx_printf(&gfx_con, "%02X", key[i]);
+			for (u32 j = 0; j < 0x10; j++)
+				gfx_printf(&gfx_con, "%02X", keys[((i - 1) * 0x10) + j]);
 		}
 		else
 			EPRINTFARGS("ERROR %X", res);
 		gfx_putc(&gfx_con, '\n');
 	}
 
+	gfx_puts(&gfx_con, "\nPress POWER to dump them to SD Card.\nPress VOL to go to the menu.\n");
+	
+	u32 btn = btn_wait();
+	if (btn & BTN_POWER)
+	{
+		if (sd_mount())
+		{
+			f_mkdir("Backup");
+			f_mkdir("Backup/Dumps");
+			if (!sd_save_to_file(keys, 0x10 * 3, "Backup/Dumps/tsec_key.bin"))
+				gfx_puts(&gfx_con, "\nDone!\n");
+			sd_unmount();
+		}
+	}
+	else
+		goto out;
+	
+out_wait:;
+	btn_wait();
+	
 out:;
 	free(pkg1);
-	sdmmc_storage_end(&storage);
-
-	gfx_puts(&gfx_con, "\nPress any key...\n");
-	btn_wait();
 }
 
 void reboot_normal()
@@ -845,7 +854,7 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 
 	FIL partialIdxFp;
 	char partialIdxFilename[12];
-	memcpy(partialIdxFilename, "partial.idx\0", 12);
+	memcpy(partialIdxFilename, "partial.idx", 12);
 
 	gfx_con.fntsz = 8;
 	gfx_printf(&gfx_con, "\nSD Card free space: %d MiB, Total backup size %d MiB\n\n",
@@ -1015,11 +1024,11 @@ int dump_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part)
 				// More parts to backup that do not currently fit the sd card free space or fatal error.
 				if (currPartIdx >= maxSplitParts)
 				{
-					gfx_puts(&gfx_con, "\n\n1. Press any key and Power off Switch from the main menu.\n\
-						2. Move the files from SD card to free space.\n\
+					gfx_puts(&gfx_con, "\n\n1. Press any key to unmount SD Card.\n\
+						2. Remove SD Card and move files to free space.\n\
 						   Don\'t move the partial.idx file!\n\
-						3. Unplug and re-plug USB while pressing Vol+.\n\
-						4. Run hekate again and press Backup eMMC RAW GPP (or eMMC USER) to continue.\n");
+						3. Re-insert SD Card.\n\
+						4. Select the SAME option again to continue.\n");
 					gfx_con.fntsz = 16;
 
 					free(buf);
@@ -1137,7 +1146,8 @@ static void dump_emmc_selected(emmcPartType_t dumpType)
 {
 	int res = 0;
 	u32 timer = 0;
-	gfx_clear_grey(&gfx_ctxt, 0x1B);
+	gfx_clear_partial_grey(&gfx_ctxt, 0x1B, 0, 1256);
+	tui_sbar(&gfx_con, 1);
 	gfx_con_setpos(&gfx_con, 0, 0);
 
 	if (!sd_mount())
@@ -1283,7 +1293,7 @@ int restore_emmc_part(char *sd_path, sdmmc_storage_t *storage, emmc_part_t *part
 	else if (((u32)((u64)f_size(&fp)>>(u64)9)) != totalSectors)
 	{
 		gfx_con.fntsz = 16;
-		EPRINTF("Size of sd card backup does not match,\neMMC's selected part size.\n");
+		EPRINTF("Size of the SD Card backup does not match,\neMMC's selected part size.\n");
 		f_close(&fp);
 
 		return 0;
@@ -1381,7 +1391,8 @@ static void restore_emmc_selected(emmcPartType_t restoreType)
 {
 	int res = 0;
 	u32 timer = 0;
-	gfx_clear_grey(&gfx_ctxt, 0x1B);
+	gfx_clear_partial_grey(&gfx_ctxt, 0x1B, 0, 1256);
+	tui_sbar(&gfx_con, 1);
 	gfx_con_setpos(&gfx_con, 0, 0);
 
 	gfx_printf(&gfx_con, "%kThis is a dangerous operation\nand may render your device inoperative!\n\n", 0xFFFFDD00);
@@ -1504,16 +1515,15 @@ void restore_emmc_boot() { restore_emmc_selected(PART_BOOT); }
 void restore_emmc_rawnand() { restore_emmc_selected(PART_RAW); }
 void restore_emmc_gpp_parts() { restore_emmc_selected(PART_GP_ALL); }
 
-//TODO: dump_package2
-
-void dump_package1()
+void dump_packages12()
 {
 	u8 *pkg1 = (u8 *)calloc(1, 0x40000);
 	u8 *warmboot = (u8 *)calloc(1, 0x40000);
 	u8 *secmon = (u8 *)calloc(1, 0x40000);
 	u8 *loader = (u8 *)calloc(1, 0x40000);
+	u8 *pkg2 = NULL;
 
-	gfx_clear_grey(&gfx_ctxt, 0x1B);
+	gfx_clear_partial_grey(&gfx_ctxt, 0x1B, 0, 1256);
 	gfx_con_setpos(&gfx_con, 0, 0);
 
 	if (!sd_mount())
@@ -1535,65 +1545,106 @@ void dump_package1()
 	if (!pkg1_id)
 	{
 		gfx_con.fntsz = 8;
-		EPRINTFARGS("Could not identify package1 version to read TSEC firmware (= '%s').", (char *)pkg1 + 0x10);
+		EPRINTFARGS("Unknown package1 version for reading\nTSEC firmware (= '%s').", (char *)pkg1 + 0x10);
 		goto out;
 	}
 
-	// Read keyblob.
-	u8 * keyblob = (u8 *)malloc(NX_EMMC_BLOCKSIZE);
-	sdmmc_storage_read(&storage, 0x180000 / NX_EMMC_BLOCKSIZE + pkg1_id->kb, 1, keyblob);
+	if (!h_cfg.se_keygen_done)
+	{
+		// Read keyblob.
+		u8 *keyblob = (u8 *)calloc(NX_EMMC_BLOCKSIZE, 1);
+		sdmmc_storage_read(&storage, 0x180000 / NX_EMMC_BLOCKSIZE + pkg1_id->kb, 1, keyblob);
 
-	// Decrypt.
-	keygen(keyblob, pkg1_id->kb, (u8 *)pkg1 + pkg1_id->tsec_off);
+		// Decrypt.
+		keygen(keyblob, pkg1_id->kb, (u8 *)pkg1 + pkg1_id->tsec_off);
+
+		h_cfg.se_keygen_done = 1;
+		free(keyblob);
+	}
 	pkg1_decrypt(pkg1_id, pkg1);
 
 	pkg1_unpack(warmboot, secmon, loader, pkg1_id, pkg1);
 
 	// Display info.
-	gfx_printf(&gfx_con, "%kNX Bootloader size:  %k0x%05X\n", 0xFFC7EA46, 0xFFCCCCCC, hdr->ldr_size);
-	gfx_printf(&gfx_con, "%kNX Bootloader ofst:  %k0x%05X\n\n", 0xFFC7EA46, 0xFFCCCCCC, hdr->ldr_off);
+	gfx_printf(&gfx_con, "%kNX Bootloader size:  %k0x%05X\n\n", 0xFFC7EA46, 0xFFCCCCCC, hdr->ldr_size);
 
 	gfx_printf(&gfx_con, "%kSecure monitor addr: %k0x%05X\n", 0xFFC7EA46, 0xFFCCCCCC, pkg1_id->secmon_base);
 	gfx_printf(&gfx_con, "%kSecure monitor size: %k0x%05X\n\n", 0xFFC7EA46, 0xFFCCCCCC, hdr->sm_size);
-	gfx_printf(&gfx_con, "%kSecure monitor ofst: %k0x%05X\n\n", 0xFFC7EA46, 0xFFCCCCCC, hdr->sm_off);
 
 	gfx_printf(&gfx_con, "%kWarmboot addr:       %k0x%05X\n", 0xFFC7EA46, 0xFFCCCCCC, pkg1_id->warmboot_base);
 	gfx_printf(&gfx_con, "%kWarmboot size:       %k0x%05X\n\n", 0xFFC7EA46, 0xFFCCCCCC, hdr->wb_size);
-	gfx_printf(&gfx_con, "%kWarmboot ofst:       %k0x%05X\n\n", 0xFFC7EA46, 0xFFCCCCCC, hdr->wb_off);
 
-	// Dump package1.
+	// Create folders if they do not exist.
 	f_mkdir("Backup");
 	f_mkdir("Backup/pkg1");
-	if (sd_save_to_file(pkg1, 0x40000, "Backup/pkg1/pkg1_decr.bin")) {
-		EPRINTF("\nFailed to create pkg1_decr.bin");
+	f_mkdir("Backup/pkg2");
+
+	// Dump package1.1.
+	if (sd_save_to_file(pkg1, 0x40000, "Backup/pkg1/pkg1_decr.bin"))
 		goto out;
-	}
 	gfx_puts(&gfx_con, "\nFull package1 dumped to pkg1_decr.bin\n");
 
 	// Dump nxbootloader.
-	if (sd_save_to_file(loader, hdr->ldr_size, "Backup/pkg1/nxloader.bin")) {
-		EPRINTF("\nFailed to create nxloader.bin");
+	if (sd_save_to_file(loader, hdr->ldr_size, "Backup/pkg1/nxloader.bin"))
 		goto out;
-	}
 	gfx_puts(&gfx_con, "NX Bootloader dumped to nxloader.bin\n");
 
 	// Dump secmon.
-	if (sd_save_to_file(secmon, hdr->sm_size, "Backup/pkg1/secmon.bin")) {
-		EPRINTF("\nFailed to create secmon.bin");
+	if (sd_save_to_file(secmon, hdr->sm_size, "Backup/pkg1/secmon.bin"))
 		goto out;
-	}
 	gfx_puts(&gfx_con, "Secure Monitor dumped to secmon.bin\n");
 
 	// Dump warmboot.
-	if (sd_save_to_file(warmboot, hdr->wb_size, "Backup/pkg1/warmboot.bin")) {
-		EPRINTF("\nFailed to create warmboot.bin");
+	if (sd_save_to_file(warmboot, hdr->wb_size, "Backup/pkg1/warmboot.bin"))
 		goto out;
-	}
-	gfx_puts(&gfx_con, "Warmboot dumped to warmboot.bin\n");
+	gfx_puts(&gfx_con, "Warmboot dumped to warmboot.bin\n\n\n");
 
+	// Dump package2.1.
+	sdmmc_storage_set_mmc_partition(&storage, 0);
+	// Parse eMMC GPT.
+	LIST_INIT(gpt);
+	nx_emmc_gpt_parse(&gpt, &storage);
+	// Find package2 partition.
+	emmc_part_t *pkg2_part = nx_emmc_part_find(&gpt, "BCPKG2-1-Normal-Main");
+	if (!pkg2_part)
+		goto out;
 
-	sdmmc_storage_end(&storage);
-	sd_unmount();
+	// Read in package2 header and get package2 real size.
+	u8 *tmp = (u8 *)malloc(NX_EMMC_BLOCKSIZE);
+	nx_emmc_part_read(&storage, pkg2_part, 0x4000 / NX_EMMC_BLOCKSIZE, 1, tmp);
+	u32 *hdr_pkg2_raw = (u32 *)(tmp + 0x100);
+	u32 pkg2_size = hdr_pkg2_raw[0] ^ hdr_pkg2_raw[2] ^ hdr_pkg2_raw[3];
+	free(tmp);
+	// Read in package2.
+	u32 pkg2_size_aligned = ALIGN(pkg2_size, NX_EMMC_BLOCKSIZE);
+	pkg2 = malloc(pkg2_size_aligned);
+	nx_emmc_part_read(&storage, pkg2_part, 0x4000 / NX_EMMC_BLOCKSIZE, 
+		pkg2_size_aligned / NX_EMMC_BLOCKSIZE, pkg2);
+	// Decrypt package2 and parse KIP1 blobs in INI1 section.
+	pkg2_hdr_t *pkg2_hdr = pkg2_decrypt(pkg2);
+
+	// Display info.
+	u32 kernel_crc32 = crc32c(pkg2_hdr->data, pkg2_hdr->sec_size[PKG2_SEC_KERNEL]);
+	gfx_printf(&gfx_con, "\n%kKernel CRC32C: %k0x%08X\n\n",0xFFC7EA46, 0xFFCCCCCC, kernel_crc32);
+	gfx_printf(&gfx_con, "%kKernel size:   %k0x%05X\n\n", 0xFFC7EA46, 0xFFCCCCCC, pkg2_hdr->sec_size[PKG2_SEC_KERNEL]);
+	gfx_printf(&gfx_con, "%kINI1 size:     %k0x%05X\n\n", 0xFFC7EA46, 0xFFCCCCCC, pkg2_hdr->sec_size[PKG2_SEC_INI1]);
+	// Dump pkg2.1.
+	if (sd_save_to_file(pkg2, pkg2_hdr->sec_size[PKG2_SEC_KERNEL] + pkg2_hdr->sec_size[PKG2_SEC_INI1],
+		"Backup/pkg2/pkg2_decr.bin"))
+		goto out;
+	gfx_puts(&gfx_con, "\nFull package2 dumped to pkg2_decr.bin\n");
+
+	// Dump kernel.
+	if (sd_save_to_file(pkg2_hdr->data, pkg2_hdr->sec_size[PKG2_SEC_KERNEL], "Backup/pkg2/kernel.bin"))
+		goto out;
+	gfx_puts(&gfx_con, "Kernel dumped to kernel.bin\n");
+
+	// Dump INI1.
+	if (sd_save_to_file(pkg2_hdr->data + pkg2_hdr->sec_size[PKG2_SEC_KERNEL],
+		pkg2_hdr->sec_size[PKG2_SEC_INI1], "Backup/pkg2/ini1.bin"))
+		goto out;
+	gfx_puts(&gfx_con, "INI1 kip1 package dumped to ini1.bin\n");
+	
 	gfx_puts(&gfx_con, "\nDone. Press any key...\n");
 
 out:;
@@ -1601,6 +1652,10 @@ out:;
 	free(secmon);
 	free(warmboot);
 	free(loader);
+	free(pkg2);
+	nx_emmc_gpt_free(&gpt);
+	sdmmc_storage_end(&storage);
+	sd_unmount();
 
 	btn_wait();
 }
@@ -1812,6 +1867,9 @@ void auto_launch_firmware()
 					// Center logo if res < 720x1280.
 					bmpData.pos_x = (720  - bmpData.size_x) >> 1;
 					bmpData.pos_y = (1280 - bmpData.size_y) >> 1;
+					// Get background color from 1st pixel.
+					if (bmpData.size_x < 720 || bmpData.size_y < 1280)
+						gfx_clear_color(&gfx_ctxt, *(u32 *)BOOTLOGO);
 
 					bootlogoFound = 1;
 				}
@@ -1861,6 +1919,7 @@ void auto_launch_firmware()
 	}
 
 out:;
+	gfx_clear_grey(&gfx_ctxt, 0x1B);
 	if (!ini_freed)
 		ini_free(&ini_sections);
 	ini_free_section(cfg_sec);
@@ -1876,7 +1935,7 @@ void toggle_autorcm(){
 	sdmmc_storage_t storage;
 	sdmmc_t sdmmc;
 
-	gfx_clear_grey(&gfx_ctxt, 0x1B);
+	gfx_clear_partial_grey(&gfx_ctxt, 0x1B, 0, 1256);
 	gfx_con_setpos(&gfx_con, 0, 0);
 
 	if (!sdmmc_storage_init_mmc(&storage, &sdmmc, SDMMC_4, SDMMC_BUS_WIDTH_8, 4))
@@ -1906,70 +1965,83 @@ out:;
 	btn_wait();
 }
 
-int fix_attributes(char *path, u32 *total)
+int fix_attributes(char *path, u32 *total, u32 is_root, u32 check_first_run)
 {
 	FRESULT res;
 	DIR dir;
-	u32 i = 0;
-	u32 k = 0;
+	u32 dirLength = 0;
 	static FILINFO fno;
 
-	// Remove archive bit for selected "root" path.
-	f_chmod(path, 0, AM_ARC);
+	if (check_first_run)
+	{
+		// Read file attributes.
+		res = f_stat(path, &fno);
+		if (res != FR_OK)
+			return res;
 
+		// Check if archive bit is set.
+		if (fno.fattrib & AM_ARC)
+		{
+			*(u32 *)total = *(u32 *)total + 1;
+			f_chmod(path, 0, AM_ARC);
+		}
+	}
+	
 	// Open directory.
 	res = f_opendir(&dir, path);
-	if (res == FR_OK)
+	if (res != FR_OK)
+		return res;
+
+	dirLength = strlen(path);
+	for (;;)
 	{
-		for (;;)
+		// Clear file or folder path.
+		path[dirLength] = 0;
+
+		// Read a directory item.
+		res = f_readdir(&dir, &fno);
+
+		// Break on error or end of dir.
+		if (res != FR_OK || fno.fname[0] == 0)
+			break;
+
+		// Skip official Nintendo dir.
+		if (is_root && !strcmp(fno.fname, "Nintendo"))
+			continue;
+
+		// Set new directory or file.
+		memcpy(&path[dirLength], "/", 1);
+		memcpy(&path[dirLength+1], fno.fname, strlen(fno.fname) + 1);
+
+		// Check if archive bit is set.
+		if (fno.fattrib & AM_ARC)
 		{
-			// Read a directory item.
-			res = f_readdir(&dir, &fno);
-			// Break on error or end of dir.
-			if (res != FR_OK || fno.fname[0] == 0)
-				break;
-
-			// Set new directory.
-			i = strlen(path);
-			memcpy(&path[i], "/", 1);
-			for (k = 0; k < 256; k++)
-			{
-				if (fno.fname[k] == 0)
-					break;
-			}
-			memcpy(&path[i+1], fno.fname, k + 1);
-			path[i + k + 2] = 0;
-
-			// Check if archive bit is set.
-			if (fno.fattrib & AM_ARC)
-			{
-				*(u32 *)total = *(u32 *)total + 1;
-				f_chmod(path, 0, AM_ARC);
-			}
-
-			// Is it a directory?
-			if (fno.fattrib & AM_DIR)
-			{
-				// Enter the directory.
-				res = fix_attributes(path, total);
-				if (res != FR_OK)
-					break;
-			}
-			// Clear file or folder path.
-			path[i] = 0;
+			*(u32 *)total = *(u32 *)total + 1;
+			f_chmod(path, 0, AM_ARC);
 		}
-		f_closedir(&dir);
+
+		// Is it a directory?
+		if (fno.fattrib & AM_DIR)
+		{
+			// Enter the directory.
+			res = fix_attributes(path, total, 0, 0);
+			if (res != FR_OK)
+				break;
+		}
 	}
+
+	f_closedir(&dir);
 
 	return res;
 }
 
 void fix_sd_attr(u32 type)
 {
-	gfx_clear_grey(&gfx_ctxt, 0x1B);
+	gfx_clear_partial_grey(&gfx_ctxt, 0x1B, 0, 1256);
 	gfx_con_setpos(&gfx_con, 0, 0);
 
-	char buff[256];
+	char path[256];
+	char label[14];
 
 	u32 total = 0;
 	if (sd_mount())
@@ -1977,25 +2049,26 @@ void fix_sd_attr(u32 type)
 		switch (type)
 		{
 		case 0:
-			gfx_printf(&gfx_con, "Traversing all switch folder files!\nThis may take some time, please wait...\n");
-			memcpy(buff, "/switch\0", 8);
+			memcpy(path, "/", 2);
+			memcpy(label, "SD Card", 8);
 			break;
 		case 1:
 		default:
-			gfx_printf(&gfx_con, "Traversing all sd card files!\nThis may take some time, please wait...\n");
-			memcpy(buff, "/\0", 2);
+			memcpy(path, "/switch", 8);
+			memcpy(label, "switch folder", 14);
 			break;
 		}
 		
-		fix_attributes(buff, &total);
-		gfx_printf(&gfx_con, "\n%kTotal archive bits cleared: %d!%k\n\nDone! Press any key...", 0xFF96FF00, total, 0xFFCCCCCC);
+		gfx_printf(&gfx_con, "Traversing all %s files!\nThis may take some time, please wait...\n\n", label);
+		fix_attributes(path, &total, !type, type);
+		gfx_printf(&gfx_con, "%kTotal archive bits cleared: %d!%k\n\nDone! Press any key...", 0xFF96FF00, total, 0xFFCCCCCC);
 		sd_unmount();
 	}
 	btn_wait();
 }
 
-void fix_sd_switch_attr() { fix_sd_attr(0); }
-void fix_sd_all_attr() { fix_sd_attr(1); }
+void fix_sd_all_attr() { fix_sd_attr(0); }
+void fix_sd_switch_attr() { fix_sd_attr(1); }
 
 void print_fuel_gauge_info()
 {
@@ -2123,7 +2196,7 @@ void print_battery_charger_info()
 
 void print_battery_info()
 {
-	gfx_clear_grey(&gfx_ctxt, 0x1B);
+	gfx_clear_partial_grey(&gfx_ctxt, 0x1B, 0, 1256);
 	gfx_con_setpos(&gfx_con, 0, 0);
 
 	print_fuel_gauge_info();
@@ -2150,12 +2223,9 @@ void print_battery_info()
 	{
 		if (sd_mount())
 		{
-			char fuelFilename[28];
 			f_mkdir("Backup");
 			f_mkdir("Backup/Dumps");
-			memcpy(fuelFilename, "Backup/Dumps/fuel_gauge.bin\0", 28);
-
-			if (sd_save_to_file((u8 *)buf, 0x200, fuelFilename))
+			if (sd_save_to_file((u8 *)buf, 0x200, "Backup/Dumps/fuel_gauge.bin"))
 				EPRINTF("\nError creating fuel.bin file.");
 			else
 				gfx_puts(&gfx_con, "\nDone!\n");
@@ -2169,7 +2239,7 @@ void print_battery_info()
 
 /* void fix_fuel_gauge_configuration()
 {
-	gfx_clear_grey(&gfx_ctxt, 0x1B);
+	gfx_clear_partial_grey(&gfx_ctxt, 0x1B, 0, 1256);
 	gfx_con_setpos(&gfx_con, 0, 0);
 
 	int battVoltage, avgCurrent;
@@ -2222,7 +2292,7 @@ void print_battery_info()
 {
 	int avgCurrent;
 
-	gfx_clear_grey(&gfx_ctxt, 0x1B);
+	gfx_clear_partial_grey(&gfx_ctxt, 0x1B, 0, 1256);
 	gfx_con_setpos(&gfx_con, 0, 0);
 
 	gfx_printf(&gfx_con, "%k\nThis will wipe your battery stats completely!\n"
@@ -2233,7 +2303,7 @@ void print_battery_info()
 	u32 btn = btn_wait();
 	if (btn & BTN_POWER)
 	{
-		gfx_clear_grey(&gfx_ctxt, 0x1B);
+		gfx_clear_partial_grey(&gfx_ctxt, 0x1B, 0, 1256);
 		gfx_con_setpos(&gfx_con, 0, 0);
 		gfx_printf(&gfx_con, "%kKeep the USB cable connected!%k\n\n", 0xFFFFDD00, 0xFFCCCCCC);
 		gfx_con_getpos(&gfx_con, &gfx_con.savedx,  &gfx_con.savedy);
@@ -2268,7 +2338,7 @@ void print_battery_info()
 
 void fix_battery_desync()
 {
-	gfx_clear_grey(&gfx_ctxt, 0x1B);
+	gfx_clear_partial_grey(&gfx_ctxt, 0x1B, 0, 1256);
 	gfx_con_setpos(&gfx_con, 0, 0);
 
 	max77620_low_battery_monitor_config();
@@ -2339,7 +2409,7 @@ ment_t ment_options[] = {
 
 menu_t menu_options = {
 	ment_options,
-	"Launch options", 0, 0
+	"Launch Options", 0, 0
 };
 
 ment_t ment_cinfo[] = {
@@ -2360,7 +2430,7 @@ ment_t ment_cinfo[] = {
 };
 menu_t menu_cinfo = {
 	ment_cinfo,
-	"Console info", 0, 0
+	"Console Info", 0, 0
 };
 
 ment_t ment_autorcm[] = {
@@ -2399,7 +2469,7 @@ ment_t ment_restore[] = {
 
 menu_t menu_restore = {
 	ment_restore,
-	"Restore options", 0, 0
+	"Restore Options", 0, 0
 };
 
 ment_t ment_backup[] = {
@@ -2417,7 +2487,7 @@ ment_t ment_backup[] = {
 
 menu_t menu_backup = {
 	ment_backup,
-	"Backup options", 0, 0
+	"Backup Options", 0, 0
 };
 
 ment_t ment_tools[] = {
@@ -2429,10 +2499,10 @@ ment_t ment_tools[] = {
 	MDEF_HANDLER("Verification options", config_verification),
 	MDEF_CHGLINE(),
 	MDEF_CAPTION("-------- Misc --------", 0xFF0AB9E6),
-	MDEF_HANDLER("Dump package1", dump_package1),
+	MDEF_HANDLER("Dump package1/2", dump_packages12),
 	MDEF_HANDLER("Fix battery de-sync", fix_battery_desync),
-	MDEF_HANDLER("Remove archive bit (switch folder)", fix_sd_switch_attr),
-	//MDEF_HANDLER("Remove archive bit (all sd files)", fix_sd_all_attr),
+	MDEF_HANDLER("Unset archive bit (switch folder)", fix_sd_switch_attr),
+	MDEF_HANDLER("Unset archive bit (all sd files)", fix_sd_all_attr),
 	//MDEF_HANDLER("Fix fuel gauge configuration", fix_fuel_gauge_configuration),
 	//MDEF_HANDLER("Reset all battery cfg", reset_pmic_fuel_gauge_charger_config),
 	MDEF_CHGLINE(),
@@ -2462,7 +2532,7 @@ ment_t ment_top[] = {
 };
 menu_t menu_top = {
 	ment_top,
-	"hekate - CTCaer mod v3.1", 0, 0
+	"hekate - CTCaer mod v3.2", 0, 0
 };
 
 extern void pivot_stack(u32 stack_top);
@@ -2484,7 +2554,6 @@ void ipl_main()
 	//display_color_screen(0xAABBCCDD);
 	u32 *fb = display_init_framebuffer();
 	gfx_init_ctxt(&gfx_ctxt, fb, 720, 1280, 768);
-	gfx_clear_grey(&gfx_ctxt, 0x1B);
 
 #ifdef MENU_LOGO_ENABLE
 	Kc_MENU_LOGO = (u8 *)malloc(0x6000);
